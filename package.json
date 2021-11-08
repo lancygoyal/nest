@@ -16,6 +16,7 @@
   "scripts": {
     "build": "gulp build --dist node_modules/@nestjs",
     "postbuild": "gulp move",
+    "changelog": "lerna-changelog",
     "prebuild:prod": "npm run clean",
     "build:prod": "gulp build",
     "build:samples": "gulp install:samples && npm run build && gulp build:samples && gulp test:samples && gulp test:e2e:samples",
@@ -33,7 +34,7 @@
     "lint:integration": "eslint 'integration/*/{,!(node_modules)/**/}/*.ts' -c '.eslintrc.spec.js'",
     "lint:packages": "eslint 'packages/**/**.ts' --ignore-pattern 'packages/**/*.spec.ts'",
     "lint:spec": "eslint 'packages/**/**.spec.ts' -c '.eslintrc.spec.js'",
-    "prerelease": "gulp copy-misc && gulp build --dist node_modules/@nestjs",
+    "prerelease": "gulp copy-misc && gulp build --dist node_modules/@nestjs && npm run changelog | pbcopy",
     "publish": "npm run prerelease && npm run build:prod && ./node_modules/.bin/lerna publish --force-publish --access public --exact -m \"chore(@nestjs) publish %s release\"",
     "publish:beta": "npm run prerelease && npm run build:prod && ./node_modules/.bin/lerna publish --npm-tag=beta --access public -m \"chore(@nestjs) publish %s release\"",
     "publish:next": "npm run prerelease && npm run build:prod && ./node_modules/.bin/lerna publish --npm-tag=next --access public --skip-git -m \"chore(@nestjs) publish %s release\"",
@@ -67,7 +68,7 @@
     "path-to-regexp": "3.2.0",
     "reflect-metadata": "0.1.13",
     "rxjs": "7.4.0",
-    "socket.io": "4.3.1",
+    "socket.io": "4.3.2",
     "tslib": "2.3.1",
     "uuid": "8.3.2"
   },
@@ -75,7 +76,7 @@
     "@codechecks/client": "0.1.12",
     "@commitlint/cli": "14.1.0",
     "@commitlint/config-angular": "14.1.0",
-    "@grpc/grpc-js": "1.4.2",
+    "@grpc/grpc-js": "1.4.3",
     "@grpc/proto-loader": "0.6.6",
     "@nestjs/graphql": "9.1.1",
     "@nestjs/mongoose": "9.0.1",
@@ -100,8 +101,8 @@
     "@typescript-eslint/parser": "4.33.0",
     "amqp-connection-manager": "3.7.0",
     "amqplib": "0.8.0",
-    "apollo-server-core": "3.4.0",
-    "apollo-server-express": "3.4.0",
+    "apollo-server-core": "3.5.0",
+    "apollo-server-express": "3.5.0",
     "artillery": "1.7.9",
     "body-parser": "1.19.0",
     "bytes": "3.1.0",
@@ -109,7 +110,7 @@
     "cache-manager-redis-store": "2.0.0",
     "chai": "4.3.4",
     "chai-as-promised": "7.1.1",
-    "clang-format": "1.5.0",
+    "clang-format": "1.6.0",
     "commitlint-circle": "1.0.0",
     "concurrently": "6.3.0",
     "conventional-changelog": "3.1.24",
@@ -122,11 +123,11 @@
     "eslint-plugin-import": "2.25.2",
     "eventsource": "1.1.0",
     "fancy-log": "1.3.3",
-    "fastify": "3.22.0",
+    "fastify": "3.23.1",
     "fastify-cors": "6.0.2",
     "fastify-formbody": "5.1.0",
     "fastify-multipart": "5.1.0",
-    "fastify-static": "4.4.2",
+    "fastify-static": "4.5.0",
     "graphql": "15.7.2",
     "graphql-tools": "7.0.5",
     "gulp": "4.0.2",
@@ -141,6 +142,7 @@
     "json-loader": "0.5.7",
     "kafkajs": "1.15.0",
     "lerna": "2.11.0",
+    "lerna-changelog": "^2.2.0",
     "light-my-request": "4.6.0",
     "lint-staged": "11.2.6",
     "markdown-table": "2.0.0",
@@ -158,7 +160,7 @@
     "prettier": "2.4.1",
     "redis": "3.1.2",
     "rxjs-compat": "6.6.7",
-    "sinon": "11.1.2",
+    "sinon": "12.0.1",
     "sinon-chai": "3.7.0",
     "socket.io-client": "4.3.2",
     "subscriptions-transport-ws": "0.11.0",
@@ -178,6 +180,15 @@
     "url": "https://opencollective.com/nest",
     "donation": {
       "text": "Become a partner:"
+    }
+  },
+  "changelog": {
+    "labels": {
+      "type: feature :tada:": "Features",
+      "type: bug :sob:": "Bug fixes",
+      "type: enhancement :wolf:": "Enhancements",
+      "type: docs :page_facing_up:": "Docs",
+      "dependencies": "Dependencies"
     }
   },
   "nyc": {
