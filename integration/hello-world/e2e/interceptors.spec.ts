@@ -10,7 +10,7 @@ import { Test } from '@nestjs/testing';
 import { of } from 'rxjs';
 import { map } from 'rxjs/operators';
 import * as request from 'supertest';
-import { ApplicationModule } from '../src/app.module';
+import { AppModule } from '../src/app.module';
 
 const RETURN_VALUE = 'test';
 
@@ -48,7 +48,7 @@ export class HeaderInterceptor {
     const ctx = context.switchToHttp();
     const res = ctx.getResponse();
     for (const key in this.headers) {
-      if (this.headers.hasOwnProperty(key)) {
+      if (Object.prototype.hasOwnProperty.call(this.headers, key)) {
         res.header(key, this.headers[key]);
       }
     }
@@ -58,7 +58,7 @@ export class HeaderInterceptor {
 
 function createTestModule(interceptor) {
   return Test.createTestingModule({
-    imports: [ApplicationModule],
+    imports: [AppModule],
     providers: [
       {
         provide: APP_INTERCEPTOR,

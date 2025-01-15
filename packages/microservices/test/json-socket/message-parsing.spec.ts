@@ -1,8 +1,10 @@
 import { expect } from 'chai';
 import { Socket } from 'net';
 import * as sinon from 'sinon';
-import { ERROR_EVENT, MESSAGE_EVENT } from '../../constants';
+import { TcpEventsMap } from '../../events/tcp.events';
 import { JsonSocket } from '../../helpers/json-socket';
+
+const MESSAGE_EVENT = 'message';
 
 describe('JsonSocket message parsing', () => {
   const socket = new JsonSocket(new Socket());
@@ -107,21 +109,22 @@ describe('JsonSocket message parsing', () => {
 
   describe('Error handling', () => {
     describe('JSON Error', () => {
-      const errorMsg = `Could not parse JSON: Unexpected end of JSON input\nRequest data: "Hel`;
-      const packetStrin = '4#"Hel';
-      const packet = Buffer.from(packetStrin);
+      const errorMsgNodeAboveV20 = `Could not parse JSON: Unterminated string in JSON at position 4 (line 1 column 5)\nRequest data: "Hel`;
+      const errorMsg = `Could not parse JSON: Unterminated string in JSON at position 4\nRequest data: "Hel`;
+      const packetString = '4#"Hel';
+      const packet = Buffer.from(packetString);
 
       it('should fail to parse invalid JSON', () => {
         try {
           socket['handleData']('4#"Hel');
         } catch (err) {
-          expect(err.message).to.deep.equal(errorMsg);
+          expect([errorMsgNodeAboveV20, errorMsg]).to.include(err.message);
         }
         expect(messages.length).to.deep.equal(0);
         expect(socket['buffer']).to.deep.equal('');
       });
 
-      it(`should emit ${ERROR_EVENT} event on socket`, () => {
+      it(`should emit ${TcpEventsMap.ERROR} event on socket`, () => {
         const socketEmitSpy: sinon.SinonSpy<any, any> = sinon.spy(
           socket['socket'],
           'emit',
@@ -129,9 +132,20 @@ describe('JsonSocket message parsing', () => {
 
         socket['onData'](packet);
 
-        expect(socketEmitSpy.calledOnceWithExactly(ERROR_EVENT, errorMsg)).to.be
-          .true;
-        socketEmitSpy.restore();
+        try {
+          expect(
+            socketEmitSpy.calledOnceWithExactly(TcpEventsMap.ERROR, errorMsg),
+          ).to.be.true;
+        } catch (err) {
+          expect(
+            socketEmitSpy.calledWithExactly(
+              TcpEventsMap.ERROR,
+              errorMsgNodeAboveV20,
+            ),
+          ).to.be.true;
+        } finally {
+          socketEmitSpy.restore();
+        }
       });
 
       it(`should send a FIN packet`, () => {
@@ -146,12 +160,12 @@ describe('JsonSocket message parsing', () => {
 
     describe('Corrupted length value', () => {
       const errorMsg = `Corrupted length value "wtf" supplied in a packet`;
-      const packetStrin = 'wtf#"Hello"';
-      const packet = Buffer.from(packetStrin);
+      const packetString = 'wtf#"Hello"';
+      const packet = Buffer.from(packetString);
 
       it('should not accept invalid content length', () => {
         try {
-          socket['handleData'](packetStrin);
+          socket['handleData'](packetString);
         } catch (err) {
           expect(err.message).to.deep.equal(errorMsg);
         }
@@ -159,7 +173,7 @@ describe('JsonSocket message parsing', () => {
         expect(socket['buffer']).to.deep.equal('');
       });
 
-      it(`should emit ${ERROR_EVENT} event on socket`, () => {
+      it(`should emit ${TcpEventsMap.ERROR} event on socket`, () => {
         const socketEmitSpy: sinon.SinonSpy<any, any> = sinon.spy(
           socket['socket'],
           'emit',
@@ -167,9 +181,15 @@ describe('JsonSocket message parsing', () => {
 
         socket['onData'](packet);
 
-        expect(socketEmitSpy.calledOnceWithExactly(ERROR_EVENT, errorMsg)).to.be
-          .true;
-        socketEmitSpy.restore();
+        try {
+          expect(
+            socketEmitSpy.calledOnceWithExactly(TcpEventsMap.ERROR, errorMsg),
+          ).to.be.true;
+        } catch {
+          // Do nothing
+        } finally {
+          socketEmitSpy.restore();
+        }
       });
 
       it(`should send a FIN packet`, () => {

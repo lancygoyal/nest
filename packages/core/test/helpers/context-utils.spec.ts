@@ -1,4 +1,4 @@
-import { CUSTOM_ROUTE_AGRS_METADATA } from '@nestjs/common/constants';
+import { CUSTOM_ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Body, createParamDecorator, Request } from '@nestjs/common/decorators';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { expect } from 'chai';
@@ -40,7 +40,7 @@ describe('ContextUtils', () => {
           data: undefined,
           pipes: [],
         },
-        [`custom${CUSTOM_ROUTE_AGRS_METADATA}:2`]: {
+        [`custom${CUSTOM_ROUTE_ARGS_METADATA}:2`]: {
           index: 2,
           factory: () => {},
           data: undefined,
@@ -54,7 +54,9 @@ describe('ContextUtils', () => {
       );
 
       const keys = Object.keys(metadata);
-      const custom = keys.find(key => key.includes(CUSTOM_ROUTE_AGRS_METADATA));
+      const custom = keys.find(key =>
+        key.includes(CUSTOM_ROUTE_ARGS_METADATA),
+      )!;
 
       expect(metadata[custom]).to.be.an('object');
       expect(metadata[custom].index).to.be.eq(2);
@@ -87,10 +89,10 @@ describe('ContextUtils', () => {
     });
   });
   describe('mergeParamsMetatypes', () => {
-    it('should return "paramsProperties" when paramtypes array doesnt exists', () => {
+    it('should return "paramsProperties" when paramtypes array doesn\'t exists', () => {
       const paramsProperties = ['1'];
       expect(
-        contextUtils.mergeParamsMetatypes(paramsProperties as any, null),
+        contextUtils.mergeParamsMetatypes(paramsProperties as any, null!),
       ).to.be.eql(paramsProperties);
     });
   });
@@ -113,7 +115,7 @@ describe('ContextUtils', () => {
         const customFactory = undefined;
         expect(
           contextUtils.getCustomFactory(
-            customFactory,
+            customFactory!,
             undefined,
             contextFactory,
           )(),

@@ -6,6 +6,7 @@ import * as sinon from 'sinon';
 import { PassThrough, Writable } from 'stream';
 import { HttpStatus, RequestMethod } from '../../../common';
 import { RouterResponseController } from '../../router/router-response-controller';
+import { SseStream } from '../../router/sse-stream';
 import { NoopHttpAdapter } from '../utils/noop-adapter.spec';
 
 describe('RouterResponseController', () => {
@@ -71,13 +72,13 @@ describe('RouterResponseController', () => {
   describe('transformToResult', () => {
     describe('when resultOrDeferred', () => {
       describe('is Promise', () => {
-        it('should return Promise', async () => {
+        it('should return Promise that resolves to the value resolved by the input Promise', async () => {
           const value = 100;
           expect(
             await routerResponseController.transformToResult(
               Promise.resolve(value),
             ),
-          ).to.be.eq(100);
+          ).to.be.eq(value);
         });
       });
 
@@ -88,16 +89,25 @@ describe('RouterResponseController', () => {
             await routerResponseController.transformToResult(
               of(1, 2, 3, lastValue),
             ),
-          ).to.be.eq(100);
+          ).to.be.eq(lastValue);
         });
       });
 
-      describe('is value', () => {
-        it('should return Promise', async () => {
+      describe('is an object that has the method `subscribe`', () => {
+        it('should return a Promise that resolves to the input value', async () => {
+          const value = { subscribe() {} };
+          expect(
+            await routerResponseController.transformToResult(value),
+          ).to.equal(value);
+        });
+      });
+
+      describe('is an ordinary value', () => {
+        it('should return a Promise that resolves to the input value', async () => {
           const value = 100;
           expect(
             await routerResponseController.transformToResult(value),
-          ).to.be.eq(100);
+          ).to.be.eq(value);
         });
       });
     });
@@ -179,7 +189,7 @@ describe('RouterResponseController', () => {
         .stub(routerResponseController, 'transformToResult')
         .returns(Promise.resolve({ statusCode: 123, url: 'redirect url' }));
       const result = {};
-      await routerResponseController.redirect(result, null, null);
+      await routerResponseController.redirect(result, null, null!);
       expect(transformToResultSpy.firstCall.args[0]).to.be.equal(result);
     });
     it('should pass the response to redirect', async () => {
@@ -188,7 +198,7 @@ describe('RouterResponseController', () => {
         .returns(Promise.resolve({ statusCode: 123, url: 'redirect url' }));
       const redirectSpy = sinon.spy(adapter, 'redirect');
       const response = {};
-      await routerResponseController.redirect(null, response, null);
+      await routerResponseController.redirect(null, response, null!);
       expect(redirectSpy.firstCall.args[0]).to.be.equal(response);
     });
     describe('status code', () => {
@@ -253,7 +263,7 @@ describe('RouterResponseController', () => {
     it('should accept only observables', async () => {
       const result = Promise.resolve('test');
       try {
-        await routerResponseController.sse(
+        routerResponseController.sse(
           result as unknown as any,
           {} as unknown as ServerResponse,
           {} as unknown as IncomingMessage,
@@ -356,13 +366,78 @@ data: test
           request as unknown as IncomingMessage,
         );
       } catch {
-        // Wether an error is thrown or not
+        // Whether an error is thrown or not
         // is not relevant, so long as
         // result is not called
       }
 
       sinon.assert.notCalled(result);
       done();
+    });
+
+    describe('when writing data too densely', () => {
+      const DEFAULT_MAX_LISTENERS = SseStream.defaultMaxListeners;
+      const MAX_LISTENERS = 1;
+      const sandbox = sinon.createSandbox();
+
+      beforeEach(() => {
+        // Can't access to the internal sseStream,
+        // as a workaround, set `defaultMaxListeners` of `SseStream` and reset the max listeners of `process`
+        const PROCESS_MAX_LISTENERS = process.getMaxListeners();
+        SseStream.defaultMaxListeners = MAX_LISTENERS;
+        process.setMaxListeners(PROCESS_MAX_LISTENERS);
+
+        const sseStream = sinon.createStubInstance(SseStream);
+        const originalWrite = SseStream.prototype.write;
+        // Make `.write()` always return false, so as to listen `drain` event
+        sseStream.write.callsFake(function (...args: any[]) {
+          originalWrite.apply(this, args);
+          return false;
+        });
+        sandbox.replace(SseStream.prototype, 'write', sseStream.write);
+      });
+
+      afterEach(() => {
+        sandbox.restore();
+        SseStream.defaultMaxListeners = DEFAULT_MAX_LISTENERS;
+      });
+
+      it('should not cause memory leak', async () => {
+        let maxDrainListenersExceededWarning = null;
+        process.on('warning', (warning: any) => {
+          if (
+            warning.name === 'MaxListenersExceededWarning' &&
+            warning.emitter instanceof SseStream &&
+            warning.type === 'drain' &&
+            warning.count === MAX_LISTENERS + 1
+          ) {
+            maxDrainListenersExceededWarning = warning;
+          }
+        });
+
+        const result = new Subject();
+
+        const response = new Writable();
+        response._write = () => {};
+
+        const request = new Writable();
+        request._write = () => {};
+
+        routerResponseController.sse(
+          result,
+          response as unknown as ServerResponse,
+          request as unknown as IncomingMessage,
+        );
+
+        // Send multiple messages simultaneously
+        Array.from({ length: MAX_LISTENERS + 1 }).forEach((_, i) =>
+          result.next(String(i)),
+        );
+
+        await new Promise(resolve => process.nextTick(resolve));
+
+        expect(maxDrainListenersExceededWarning).to.equal(null);
+      });
     });
 
     describe('when there is an error', () => {

@@ -8,9 +8,9 @@ import {
   RequestMethod,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
-import { ApplicationModule } from '../src/app.module';
 import { Response } from 'express';
+import * as request from 'supertest';
+import { AppModule } from '../src/app.module';
 
 const INCLUDED_VALUE = 'test_included';
 const RETURN_VALUE = 'test';
@@ -32,7 +32,7 @@ class TestController {
 }
 
 @Module({
-  imports: [ApplicationModule],
+  imports: [AppModule],
   controllers: [TestController],
 })
 class TestModule {

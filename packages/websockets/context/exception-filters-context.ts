@@ -4,6 +4,9 @@ import { BaseExceptionFilterContext } from '@nestjs/core/exceptions/base-excepti
 import { NestContainer } from '@nestjs/core/injector/container';
 import { WsExceptionsHandler } from '../exceptions/ws-exceptions-handler';
 
+/**
+ * @publicApi
+ */
 export class ExceptionFiltersContext extends BaseExceptionFilterContext {
   constructor(container: NestContainer) {
     super(container);
@@ -30,6 +33,6 @@ export class ExceptionFiltersContext extends BaseExceptionFilterContext {
   }
 
   public getGlobalMetadata<T extends any[]>(): T {
-    return [] as T;
+    return [] as any[] as T;
   }
 }

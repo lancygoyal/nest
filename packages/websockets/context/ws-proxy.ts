@@ -7,8 +7,10 @@ export class WsProxy {
   public create(
     targetCallback: (...args: unknown[]) => Promise<any>,
     exceptionsHandler: WsExceptionsHandler,
+    targetPattern?: string,
   ): (...args: unknown[]) => Promise<any> {
     return async (...args: unknown[]) => {
+      args = [...args, targetPattern ?? 'unknown'];
       try {
         const result = await targetCallback(...args);
         return !isObservable(result)
@@ -32,6 +34,6 @@ export class WsProxy {
   ) {
     const host = new ExecutionContextHost(args);
     host.setType('ws');
-    exceptionsHandler.handle(error, host);
+    exceptionsHandler.handle(error as Error, host);
   }
 }

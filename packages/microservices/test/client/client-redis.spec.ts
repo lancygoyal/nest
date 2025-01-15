@@ -1,13 +1,12 @@
 import { expect } from 'chai';
-import { Subject } from 'rxjs';
 import * as sinon from 'sinon';
 import { ClientRedis } from '../../client/client-redis';
-import { ERROR_EVENT } from '../../constants';
-import { Client } from '../../external/nats-client.interface';
+import { RedisEventsMap } from '../../events/redis.events';
 
 describe('ClientRedis', () => {
   const test = 'test';
   const client = new ClientRedis({});
+  const untypedClient = client as any;
 
   describe('getRequestPattern', () => {
     it(`should leave pattern as it is`, () => {
@@ -30,8 +29,8 @@ describe('ClientRedis', () => {
       removeListenerSpy: sinon.SinonSpy,
       unsubscribeSpy: sinon.SinonSpy,
       connectSpy: sinon.SinonSpy,
-      sub,
-      pub;
+      sub: Record<string, Function>,
+      pub: Record<string, Function>;
 
     beforeEach(() => {
       subscribeSpy = sinon.spy((name, fn) => fn());
@@ -45,11 +44,10 @@ describe('ClientRedis', () => {
         on: (type, handler) => (type === 'subscribe' ? handler() : onSpy()),
         removeListener: removeListenerSpy,
         unsubscribe: unsubscribeSpy,
-        addListener: () => ({}),
       };
       pub = { publish: publishSpy };
-      (client as any).subClient = sub;
-      (client as any).pubClient = pub;
+      untypedClient.subClient = sub;
+      untypedClient.pubClient = pub;
       connectSpy = sinon.spy(client, 'connect');
     });
     afterEach(() => {
@@ -59,8 +57,8 @@ describe('ClientRedis', () => {
       client['publish'](msg, () => {});
       expect(subscribeSpy.calledWith(`${pattern}.reply`)).to.be.true;
     });
-    it('should publish stringified message to request pattern name', async () => {
-      await client['publish'](msg, () => {});
+    it('should publish stringified message to request pattern name', () => {
+      client['publish'](msg, () => {});
       expect(publishSpy.calledWith(pattern, JSON.stringify(msg))).to.be.true;
     });
     describe('on error', () => {
@@ -95,12 +93,12 @@ describe('ClientRedis', () => {
         callback = sinon.spy();
         assignStub = sinon
           .stub(client, 'assignPacketId' as any)
-          .callsFake(packet => Object.assign(packet, { id }));
+          .callsFake(packet => Object.assign(packet as object, { id }));
 
         getReplyPatternStub = sinon
           .stub(client, 'getReplyPattern')
           .callsFake(() => channel);
-        subscription = await client['publish'](msg, callback);
+        subscription = client['publish'](msg, callback);
         subscription(channel, JSON.stringify({ isDisposed: true, id }));
       });
       afterEach(() => {
@@ -183,23 +181,26 @@ describe('ClientRedis', () => {
     });
   });
   describe('close', () => {
+    const untypedClient = client as any;
+
     let pubClose: sinon.SinonSpy;
     let subClose: sinon.SinonSpy;
-    let pub, sub;
+    let pub: any, sub: any;
+
     beforeEach(() => {
       pubClose = sinon.spy();
       subClose = sinon.spy();
       pub = { quit: pubClose };
       sub = { quit: subClose };
-      (client as any).pubClient = pub;
-      (client as any).subClient = sub;
+      untypedClient.pubClient = pub;
+      untypedClient.subClient = sub;
     });
     it('should close "pub" when it is not null', () => {
       client.close();
       expect(pubClose.called).to.be.true;
     });
     it('should not close "pub" when it is null', () => {
-      (client as any).pubClient = null;
+      untypedClient.pubClient = null;
       client.close();
       expect(pubClose.called).to.be.false;
     });
@@ -208,110 +209,129 @@ describe('ClientRedis', () => {
       expect(subClose.called).to.be.true;
     });
     it('should not close "sub" when it is null', () => {
-      (client as any).subClient = null;
+      untypedClient.subClient = null;
       client.close();
       expect(subClose.called).to.be.false;
     });
   });
   describe('connect', () => {
     let createClientSpy: sinon.SinonSpy;
-    let handleErrorsSpy: sinon.SinonSpy;
+    let registerErrorListenerSpy: sinon.SinonSpy;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       createClientSpy = sinon.stub(client, 'createClient').callsFake(
         () =>
           ({
+            on: () => null,
             addListener: () => null,
             removeListener: () => null,
-          } as any),
+            connect: () => Promise.resolve(),
+          }) as any,
       );
-      handleErrorsSpy = sinon.spy(client, 'handleError');
+      registerErrorListenerSpy = sinon.spy(client, 'registerErrorListener');
 
-      client.connect();
+      await client.connect();
       client['pubClient'] = null;
     });
     afterEach(() => {
       createClientSpy.restore();
-      handleErrorsSpy.restore();
+      registerErrorListenerSpy.restore();
     });
     it('should call "createClient" twice', () => {
       expect(createClientSpy.calledTwice).to.be.true;
     });
-    it('should call "handleError" twice', () => {
-      expect(handleErrorsSpy.calledTwice).to.be.true;
+    it('should call "registerErrorListener" twice', () => {
+      expect(registerErrorListenerSpy.calledTwice).to.be.true;
     });
   });
-  describe('handleError', () => {
+  describe('registerErrorListener', () => {
     it('should bind error event handler', () => {
       const callback = sinon.stub().callsFake((_, fn) => fn({ code: 'test' }));
       const emitter = {
         addListener: callback,
       };
-      client.handleError(emitter as any);
-      expect(callback.getCall(0).args[0]).to.be.eql(ERROR_EVENT);
+      client.registerErrorListener(emitter as any);
+      expect(callback.getCall(0).args[0]).to.be.eql(RedisEventsMap.ERROR);
+    });
+  });
+  describe('registerEndListener', () => {
+    it('should bind end event handler', () => {
+      const callback = sinon.stub().callsFake((_, fn) => fn({ code: 'test' }));
+      const emitter = {
+        on: callback,
+      };
+      client.registerEndListener(emitter as any);
+      expect(callback.getCall(0).args[0]).to.be.eql(RedisEventsMap.END);
+    });
+  });
+  describe('registerReadyListener', () => {
+    it('should bind ready event handler', () => {
+      const callback = sinon.stub().callsFake((_, fn) => fn({ code: 'test' }));
+      const emitter = {
+        on: callback,
+      };
+      client.registerReadyListener(emitter as any);
+      expect(callback.getCall(0).args[0]).to.be.eql(RedisEventsMap.READY);
+    });
+  });
+  describe('registerReconnectListener', () => {
+    it('should bind reconnect event handler', () => {
+      const callback = sinon.stub().callsFake((_, fn) => fn({ code: 'test' }));
+      const emitter = {
+        on: callback,
+      };
+      client.registerReconnectListener(emitter as any);
+      expect(callback.getCall(0).args[0]).to.be.eql(
+        RedisEventsMap.RECONNECTING,
+      );
     });
   });
   describe('getClientOptions', () => {
-    it('should return options object with "retry_strategy" and call "createRetryStrategy"', () => {
+    it('should return options object with "retryStrategy" and call "createRetryStrategy"', () => {
       const createSpy = sinon.spy(client, 'createRetryStrategy');
-      const { retry_strategy } = client.getClientOptions(new Subject());
+      const { retryStrategy } = client.getClientOptions()!;
       try {
-        retry_strategy({} as any);
-      } catch {}
+        retryStrategy!({} as any);
+      } catch {
+        // No empty
+      }
       expect(createSpy.called).to.be.true;
     });
   });
   describe('createRetryStrategy', () => {
-    const subject = new Subject<Error>();
     describe('when is terminated', () => {
       it('should return undefined', () => {
-        (client as any).isExplicitlyTerminated = true;
-        const result = client.createRetryStrategy({} as any, subject);
+        untypedClient.isManuallyClosed = true;
+        const result = client.createRetryStrategy(0);
         expect(result).to.be.undefined;
       });
     });
     describe('when "retryAttempts" does not exist', () => {
-      it('should return an error', () => {
-        (client as any).isExplicitlyTerminated = false;
-        (client as any).options.options = {};
-        (client as any).options.options.retryAttempts = undefined;
-        const result = client.createRetryStrategy({} as any, subject);
-        expect(result).to.be.instanceOf(Error);
+      it('should return undefined', () => {
+        untypedClient.isManuallyClosed = false;
+        untypedClient.options.options = {};
+        untypedClient.options.options.retryAttempts = undefined;
+        const result = client.createRetryStrategy(1);
+        expect(result).to.be.undefined;
       });
     });
     describe('when "attempts" count is max', () => {
-      it('should return an error', () => {
-        (client as any).isExplicitlyTerminated = false;
-        (client as any).options.options = {};
-        (client as any).options.options.retryAttempts = 3;
-        const result = client.createRetryStrategy(
-          { attempt: 4 } as any,
-          subject,
-        );
-        expect(result).to.be.instanceOf(Error);
-      });
-    });
-    describe('when ECONNREFUSED', () => {
-      it('should return error', () => {
-        (client as any).options.options = {};
-        (client as any).options.options.retryAttempts = 10;
-
-        const error = { code: 'ECONNREFUSED' };
-        const result = client.createRetryStrategy({ error } as any, subject);
-        expect(result).to.be.instanceOf(Error);
+      it('should return undefined', () => {
+        untypedClient.isManuallyClosed = false;
+        untypedClient.options.options = {};
+        untypedClient.options.options.retryAttempts = 3;
+        const result = client.createRetryStrategy(4);
+        expect(result).to.be.undefined;
       });
     });
     describe('otherwise', () => {
       it('should return delay (ms)', () => {
-        (client as any).options = {};
-        (client as any).isExplicitlyTerminated = false;
-        (client as any).options.retryAttempts = 3;
-        (client as any).options.retryDelay = 3;
-        const result = client.createRetryStrategy(
-          { attempt: 2 } as any,
-          subject,
-        );
-        expect(result).to.be.eql((client as any).options.retryDelay);
+        untypedClient.options = {};
+        untypedClient.isManuallyClosed = false;
+        untypedClient.options.retryAttempts = 3;
+        untypedClient.options.retryDelay = 3;
+        const result = client.createRetryStrategy(2);
+        expect(result).to.be.eql(untypedClient.options.retryDelay);
       });
     });
   });
@@ -324,7 +344,7 @@ describe('ClientRedis', () => {
       pubClient = {
         publish: publishStub,
       };
-      (client as any).pubClient = pubClient;
+      untypedClient.pubClient = pubClient;
     });
 
     it('should publish packet', async () => {

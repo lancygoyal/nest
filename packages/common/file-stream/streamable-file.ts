@@ -1,10 +1,38 @@
 import { Readable } from 'stream';
 import { types } from 'util';
+import { HttpStatus } from '../enums';
+import { Logger } from '../services';
 import { isFunction } from '../utils/shared.utils';
-import { StreamableFileOptions } from './streamable-options.interface';
+import { StreamableFileOptions, StreamableHandlerResponse } from './interfaces';
 
+/**
+ * @see [Streaming files](https://docs.nestjs.com/techniques/streaming-files)
+ *
+ * @publicApi
+ */
 export class StreamableFile {
   private readonly stream: Readable;
+  protected logger = new Logger('StreamableFile');
+
+  protected handleError: (
+    err: Error,
+    response: StreamableHandlerResponse,
+  ) => void = (err: Error, res) => {
+    if (res.destroyed) {
+      return;
+    }
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
+
+    res.statusCode = HttpStatus.BAD_REQUEST;
+    res.send(err.message);
+  };
+
+  protected logError: (err: Error) => void = (err: Error) => {
+    this.logger.error(err);
+  };
 
   constructor(buffer: Uint8Array, options?: StreamableFileOptions);
   constructor(readable: Readable, options?: StreamableFileOptions);
@@ -16,6 +44,7 @@ export class StreamableFile {
       this.stream = new Readable();
       this.stream.push(bufferOrReadStream);
       this.stream.push(null);
+      this.options.length ??= bufferOrReadStream.length;
     } else if (bufferOrReadStream.pipe && isFunction(bufferOrReadStream.pipe)) {
       this.stream = bufferOrReadStream;
     }
@@ -36,5 +65,28 @@ export class StreamableFile {
       disposition,
       length,
     };
+  }
+
+  get errorHandler(): (
+    err: Error,
+    response: StreamableHandlerResponse,
+  ) => void {
+    return this.handleError;
+  }
+
+  setErrorHandler(
+    handler: (err: Error, response: StreamableHandlerResponse) => void,
+  ) {
+    this.handleError = handler;
+    return this;
+  }
+
+  get errorLogger() {
+    return this.logError;
+  }
+
+  setErrorLogger(handler: (err: Error) => void) {
+    this.logError = handler;
+    return this;
   }
 }

@@ -3,10 +3,11 @@ import { expect } from 'chai';
 import { join } from 'path';
 import { Observable, Subject } from 'rxjs';
 import * as sinon from 'sinon';
-import { ClientGrpcProxy } from '../../client/client-grpc';
+import { ClientGrpcProxy } from '../../client';
 import { InvalidGrpcPackageException } from '../../errors/invalid-grpc-package.exception';
 import { InvalidGrpcServiceException } from '../../errors/invalid-grpc-service.exception';
 import { InvalidProtoDefinitionException } from '../../errors/invalid-proto-definition.exception';
+import * as grpcHelpers from '../../helpers/grpc-helpers';
 
 class NoopLogger extends Logger {
   log(message: any, context?: string): void {}
@@ -21,6 +22,7 @@ class GrpcService {
 
 describe('ClientGrpcProxy', () => {
   let client: ClientGrpcProxy;
+  let untypedClient: any;
   let clientMulti: ClientGrpcProxy;
 
   beforeEach(() => {
@@ -28,6 +30,7 @@ describe('ClientGrpcProxy', () => {
       protoPath: join(__dirname, './test.proto'),
       package: 'test',
     });
+    untypedClient = client as any;
 
     clientMulti = new ClientGrpcProxy({
       protoPath: ['test.proto', 'test2.proto'],
@@ -41,7 +44,7 @@ describe('ClientGrpcProxy', () => {
   describe('getService', () => {
     describe('when "grpcClient[name]" is nil', () => {
       it('should throw "InvalidGrpcServiceException"', () => {
-        (client as any).grpcClient = {};
+        untypedClient.grpcClient = {};
         expect(() => client.getService('test')).to.throw(
           InvalidGrpcServiceException,
         );
@@ -61,7 +64,7 @@ describe('ClientGrpcProxy', () => {
     });
     describe('when "grpcClient[name]" is not nil', () => {
       it('should create grpcService', () => {
-        (client as any).grpcClients[0] = {
+        untypedClient.grpcClients[0] = {
           test: GrpcService,
         };
         expect(() => client.getService('test')).to.not.throw(
@@ -257,7 +260,15 @@ describe('ClientGrpcProxy', () => {
     });
     describe('on subscribe', () => {
       const methodName = 'm';
-      const obj = { [methodName]: callback => callback(null, {}) };
+      const obj = {
+        [methodName]: callback => {
+          callback(null, {});
+
+          return {
+            finished: true,
+          };
+        },
+      };
 
       let stream$: Observable<any>;
 
@@ -282,12 +293,17 @@ describe('ClientGrpcProxy', () => {
       ) => void;
       const writeSpy = sinon.spy();
       const methodName = 'm';
+
+      const callMock = {
+        cancel: sinon.spy(),
+        finished: false,
+        write: writeSpy,
+      };
+
       const obj = {
         [methodName]: callback => {
           clientCallback = callback;
-          return {
-            write: writeSpy,
-          };
+          return callMock;
         },
       };
 
@@ -301,7 +317,6 @@ describe('ClientGrpcProxy', () => {
       });
 
       afterEach(() => {
-        // invoke client callback to allow resources to be cleaned up
         clientCallback(null, {});
       });
 
@@ -317,13 +332,107 @@ describe('ClientGrpcProxy', () => {
         expect(upstreamSubscribe.called).to.be.true;
       });
     });
+
+    describe('flow-control', () => {
+      it('should cancel call on client unsubscribe', () => {
+        const methodName = 'm';
+
+        const dataSpy = sinon.spy();
+        const errorSpy = sinon.spy();
+        const completeSpy = sinon.spy();
+
+        const callMock = {
+          cancel: sinon.spy(),
+          finished: false,
+        };
+
+        let handler: (error: any, data: any) => void;
+
+        const obj = {
+          [methodName]: (callback, ...args) => {
+            handler = callback;
+
+            return callMock;
+          },
+        };
+
+        const stream$ = client.createUnaryServiceMethod(obj, methodName)();
+
+        const subscription = stream$.subscribe({
+          next: dataSpy,
+          error: errorSpy,
+          complete: completeSpy,
+        });
+
+        subscription.unsubscribe();
+        handler!(null, 'a');
+
+        expect(dataSpy.called).to.be.false;
+        expect(errorSpy.called).to.be.false;
+        expect(completeSpy.called).to.be.false;
+        expect(callMock.cancel.called).to.be.true;
+      });
+
+      it('should cancel call on client unsubscribe case client streaming', () => {
+        const methodName = 'm';
+
+        const dataSpy = sinon.spy();
+        const errorSpy = sinon.spy();
+        const completeSpy = sinon.spy();
+        const writeSpy = sinon.spy();
+
+        const callMock = {
+          cancel: sinon.spy(),
+          finished: false,
+          write: writeSpy,
+        };
+
+        let handler: (error: any, data: any) => void;
+        const obj = {
+          [methodName]: callback => {
+            handler = callback;
+            return callMock;
+          },
+        };
+
+        (obj[methodName] as any).requestStream = true;
+        const upstream: Subject<unknown> = new Subject();
+        const stream$: Observable<any> = client.createUnaryServiceMethod(
+          obj,
+          methodName,
+        )(upstream);
+
+        const upstreamSubscribe = sinon.spy(upstream, 'subscribe');
+        stream$.subscribe({
+          next: () => ({}),
+          error: () => ({}),
+        });
+        upstream.next({ test: true });
+
+        const subscription = stream$.subscribe({
+          next: dataSpy,
+          error: errorSpy,
+          complete: completeSpy,
+        });
+
+        subscription.unsubscribe();
+        handler!(null, 'a');
+
+        expect(dataSpy.called).to.be.false;
+        expect(writeSpy.called).to.be.true;
+        expect(errorSpy.called).to.be.false;
+        expect(completeSpy.called).to.be.false;
+        expect(callMock.cancel.called).to.be.true;
+        expect(upstreamSubscribe.called).to.be.true;
+      });
+    });
   });
 
   describe('createClients', () => {
     describe('when package does not exist', () => {
       it('should throw "InvalidGrpcPackageException"', () => {
         sinon.stub(client, 'lookupPackage').callsFake(() => null);
-        (client as any).logger = new NoopLogger();
+        untypedClient.logger = new NoopLogger();
 
         try {
           client.createClients();
@@ -337,29 +446,37 @@ describe('ClientGrpcProxy', () => {
   describe('loadProto', () => {
     describe('when proto is invalid', () => {
       it('should throw InvalidProtoDefinitionException', () => {
-        sinon.stub(client, 'getOptionsProp' as any).callsFake(() => {
+        const getPackageDefinitionStub = sinon.stub(
+          grpcHelpers,
+          'getGrpcPackageDefinition' as any,
+        );
+        getPackageDefinitionStub.callsFake(() => {
           throw new Error();
         });
-        (client as any).logger = new NoopLogger();
+        untypedClient.logger = new NoopLogger();
         expect(() => client.loadProto()).to.throws(
           InvalidProtoDefinitionException,
         );
+        getPackageDefinitionStub.restore();
       });
     });
   });
   describe('close', () => {
     it('should call "close" method', () => {
       const grpcClient = { close: sinon.spy() };
-      (client as any).grpcClients[0] = grpcClient;
+      untypedClient.clients.set('test', grpcClient);
+      untypedClient.grpcClients[0] = {};
 
       client.close();
       expect(grpcClient.close.called).to.be.true;
+      expect(untypedClient.clients.size).to.be.eq(0);
+      expect(untypedClient.grpcClients.length).to.be.eq(0);
     });
   });
 
   describe('publish', () => {
     it('should throw exception', () => {
-      expect(() => client['publish'](null, null)).to.throws(Error);
+      expect(() => client['publish'](null, null!)).to.throws(Error);
     });
   });
 
@@ -387,7 +504,7 @@ describe('ClientGrpcProxy', () => {
     it('should return root package in case package name is not defined', () => {
       const root = {};
 
-      expect(client.lookupPackage(root, undefined)).to.be.equal(root);
+      expect(client.lookupPackage(root, undefined!)).to.be.equal(root);
       expect(client.lookupPackage(root, '')).to.be.equal(root);
     });
   });

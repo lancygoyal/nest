@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import { of } from 'rxjs';
 import * as sinon from 'sinon';
 import { Injectable, UseGuards, UsePipes } from '../../../common';
-import { CUSTOM_ROUTE_AGRS_METADATA } from '../../../common/constants';
+import { CUSTOM_ROUTE_ARGS_METADATA } from '../../../common/constants';
 import { GuardsConsumer } from '../../../core/guards/guards-consumer';
 import { GuardsContextCreator } from '../../../core/guards/guards-context-creator';
 import { NestContainer } from '../../../core/injector/container';
@@ -101,7 +101,7 @@ describe('WsContextCreator', () => {
         sinon
           .stub(guardsContextCreator, 'create')
           .callsFake(() => [{ canActivate: () => true }]);
-        const proxy = await contextCreator.create(
+        const proxy = contextCreator.create(
           instance,
           instance.test,
           module,
@@ -113,11 +113,11 @@ describe('WsContextCreator', () => {
         expect(tryActivateSpy.called).to.be.true;
       });
       describe('when can not activate', () => {
-        it('should throws forbidden exception', async () => {
+        it('should throw forbidden exception', () => {
           sinon
             .stub(guardsConsumer, 'tryActivate')
             .callsFake(async () => false);
-          const proxy = await contextCreator.create(
+          const proxy = contextCreator.create(
             instance,
             instance.test,
             module,
@@ -144,7 +144,7 @@ describe('WsContextCreator', () => {
 
   describe('createGuardsFn', () => {
     it('should throw exception when "tryActivate" returns false', () => {
-      const guardsFn = contextCreator.createGuardsFn([null], null, null);
+      const guardsFn = contextCreator.createGuardsFn([null], null!, null!)!;
       sinon.stub(guardsConsumer, 'tryActivate').callsFake(async () => false);
       guardsFn([]).catch(err => expect(err).to.not.be.undefined);
     });
@@ -155,7 +155,7 @@ describe('WsContextCreator', () => {
       const metadata = {
         [WsParamtype.SOCKET]: { index: 0, data: 'test', pipes: [] },
         [WsParamtype.PAYLOAD]: { index: 2, data: 'test', pipes: [] },
-        [`key${CUSTOM_ROUTE_AGRS_METADATA}`]: {
+        [`key${CUSTOM_ROUTE_ARGS_METADATA}`]: {
           index: 3,
           data: 'custom',
           pipes: [],
@@ -172,7 +172,7 @@ describe('WsContextCreator', () => {
       const expectedValues = [
         { index: 0, type: WsParamtype.SOCKET, data: 'test' },
         { index: 2, type: WsParamtype.PAYLOAD, data: 'test' },
-        { index: 3, type: `key${CUSTOM_ROUTE_AGRS_METADATA}`, data: 'custom' },
+        { index: 3, type: `key${CUSTOM_ROUTE_ARGS_METADATA}`, data: 'custom' },
       ];
       expect(values[0]).to.deep.include(expectedValues[0]);
       expect(values[1]).to.deep.include(expectedValues[1]);
@@ -187,8 +187,8 @@ describe('WsContextCreator', () => {
     beforeEach(() => {
       consumerApplySpy = sinon.spy(pipesConsumer, 'apply');
     });
-    it('should call "consumer.apply"', () => {
-      contextCreator.getParamValue(
+    it('should call "consumer.apply"', async () => {
+      await contextCreator.getParamValue(
         value,
         { metatype, type: WsParamtype.PAYLOAD, data: null },
         transforms,
@@ -211,12 +211,12 @@ describe('WsContextCreator', () => {
             {
               index: 1,
               type: 'test',
-              data: null,
+              data: null!,
               pipes: [],
               extractValue: () => null,
             },
           ],
-        );
+        )!;
         await pipesFn([]);
         expect(pipesFn).to.be.a('function');
       });

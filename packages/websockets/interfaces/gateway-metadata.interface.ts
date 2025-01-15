@@ -1,9 +1,10 @@
-/**
- * @external https://github.com/socketio/socket.io/blob/master/lib/index.ts
- */
-
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
+/**
+ * External interface
+ * @see https://github.com/socketio/socket.io/blob/master/lib/index.ts
+ * @publicApi
+ */
 export interface GatewayMetadata {
   /**
    * The name of a namespace
@@ -51,7 +52,7 @@ export interface GatewayMetadata {
   upgradeTimeout?: number;
   /**
    * How many bytes or characters a message can be, before closing the session (to avoid DoS).
-   * @default 1e5 (100 KB)
+   * @default 1e6 (1 MB)
    */
   maxHttpBufferSize?: number;
   /**
@@ -99,7 +100,7 @@ export interface GatewayMetadata {
    * might be used for sticky-session. Defaults to not sending any cookie.
    * @default false
    */
-  cookie?: any | boolean;
+  cookie?: any;
   /**
    * The options that will be forwarded to the cors module
    */

@@ -3,12 +3,14 @@ import { PARAMTYPES_METADATA } from '../../constants';
 export function flatten<T extends Array<unknown> = any>(
   arr: T,
 ): T extends Array<infer R> ? R : never {
-  const flat = [].concat(...arr);
+  const flat = ([] as any[]).concat(...arr);
   return flat.some(Array.isArray) ? flatten(flat) : flat;
 }
 
 /**
  * Decorator that sets required dependencies (required with a vanilla JavaScript objects)
+ *
+ * @publicApi
  */
 export const Dependencies = (
   ...dependencies: Array<unknown>

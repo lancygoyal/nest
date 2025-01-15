@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
+  <a href="https://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
 
 [circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
 [circleci-url]: https://circleci.com/gh/nestjs/nest
 
-<p align="center">すばやくスケーラブルなサーバーサイドアプリケーションを構築するための革新的な<a href="http://nodejs.org" target="_blank">Node.js</a>フレームワークです。</p>
+<p align="center">すばやくスケーラブルなサーバーサイドアプリケーションを構築するための革新的な<a href="https://nodejs.org" target="_blank">Node.js</a>フレームワークです。</p>
 <p align="center">
 <a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
 <a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
@@ -24,7 +24,7 @@
 
 ## 概要
 
-すばやくスケーラブルなサーバーサイドアプリケーションを構築するための革新的な<a href="http://nodejs.org" target="_blank">Node.js</a>フレームワークです。最新のJavaScriptを使用し、<a href="http://www.typescriptlang.org" target="_blank">TypeScript</a>（JavaScriptを拡張したスーパーセット）で構築され 、OOP（オブジェクト指向プログラミング）、FP（関数型プログラミング）、およびFRP（関数型リアクティブプログラミング）の要素を取り入れています。
+すばやくスケーラブルなサーバーサイドアプリケーションを構築するための革新的な<a href="https://nodejs.org" target="_blank">Node.js</a>フレームワークです。最新のJavaScriptを使用し、<a href="https://www.typescriptlang.org" target="_blank">TypeScript</a>（JavaScriptを拡張したスーパーセット）で構築され 、OOP（オブジェクト指向プログラミング）、FP（関数型プログラミング）、およびFRP（関数型リアクティブプログラミング）の要素を取り入れています。
 
 <p>Nestは<a href="https://expressjs.com/" target="_blank">Express</a>(デフォルト)や<a href="https://github.com/fastify/fastify" target="_blank">Fastify</a>などのさまざまなライブラリとの互換性を提供することで、たくさんのサードパーティプラグインを簡単に使用することができます。
 </p>
@@ -37,20 +37,20 @@
 
 <p>Nestは、実用的なアーキテクチャをすぐに構築できることを目的としています。具体的には、テストフレンドリーで、スケーラブルで、疎結合で、運用にやさしいアプリケーションを構築できるようになっています。また、アーキテクチャはAngularにインスパイアされています。</p>
 
-## 入門
+## はじめに
 
 * To check out the [guide](https://docs.nestjs.com), visit [docs.nestjs.com](https://docs.nestjs.com). :books:
 * 要查看中文 [指南](readme_zh.md), 请访问 [docs.nestjs.cn](https://docs.nestjs.cn). :books:
-* [가이드](readme_kr.md)를 확인하려면, [docs.nestjs.com](https://docs.nestjs.com)를 방문하세요.:books: 
-* チェックするには [ガイド](readme_jp.md), 詳しくは [docs.nestjs.com](https://docs.nestjs.com).:books:
+* [가이드](readme_kr.md) 문서는 [docs.nestjs.com](https://docs.nestjs.com)에서 확인하실 수 있습니다. :books:
+* [ガイド](readme_jp.md)は [docs.nestjs.com](https://docs.nestjs.com)でご確認ください。 :books:
 
 ## 質問
 
 質問やサポートについては、公式の[Discordチャンネル](https://discord.gg/G7Qnnhy)を使用してください。また、このリポジトリのissueリストは、バグレポートと機能リクエスト **専用** です。
 
-## 問題(Issues)
+## イシュー(Issues)
 
-issueを開く前に、必ず[Issue Reporting Checklist](https://github.com/nestjs/nest/blob/master/CONTRIBUTING.md#-submitting-an-issue)をお読みください。ガイドラインに準拠していないissueは、クローズされる場合があります。
+issueを作成する前に、必ず[Issue Reporting Checklist](https://github.com/nestjs/nest/blob/master/CONTRIBUTING.md#-submitting-an-issue)をお読みください。ガイドラインに準拠していないissueは、クローズされる場合があります。
 
 ## コンサルティング
 
@@ -60,12 +60,12 @@ issueを開く前に、必ず[Issue Reporting Checklist](https://github.com/nest
 
 Nestは、MITライセンスのオープンソースプロジェクトです。スポンサーと支援者による素晴らしいサポートによって、その発展を支えられています。参加したい場合は[こちら](https://docs.nestjs.com/support)をご覧ください。
 
-## 連絡する
+## 連絡先
 
-* Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-* Website - [https://nestjs.com](https://nestjs.com/)
-* Twitter - [@nestframework](https://twitter.com/nestframework)
+* 著者 - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
+* ウェブサイト - [https://nestjs.com](https://nestjs.com/)
+* X - [@nestframework](https://twitter.com/nestframework)
 
 ## ライセンス
 
-Nest is [MIT licensed](LICENSE).
+Nest は [MIT ライセンス](LICENSE) です。

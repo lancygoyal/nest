@@ -1,5 +1,5 @@
 import {
-  CUSTOM_ROUTE_AGRS_METADATA,
+  CUSTOM_ROUTE_ARGS_METADATA,
   PARAMTYPES_METADATA,
 } from '@nestjs/common/constants';
 import {
@@ -18,11 +18,12 @@ import {
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { HandlerMetadataStorage } from '@nestjs/core/helpers/handler-metadata-storage';
 import { ParamsMetadata } from '@nestjs/core/helpers/interfaces';
-import { InterceptorsConsumer } from '@nestjs/core/interceptors/interceptors-consumer';
-import { InterceptorsContextCreator } from '@nestjs/core/interceptors/interceptors-context-creator';
-import { PipesConsumer } from '@nestjs/core/pipes/pipes-consumer';
-import { PipesContextCreator } from '@nestjs/core/pipes/pipes-context-creator';
-import { PARAM_ARGS_METADATA } from '../constants';
+import {
+  InterceptorsConsumer,
+  InterceptorsContextCreator,
+} from '@nestjs/core/interceptors';
+import { PipesConsumer, PipesContextCreator } from '@nestjs/core/pipes';
+import { MESSAGE_METADATA, PARAM_ARGS_METADATA } from '../constants';
 import { WsException } from '../errors/ws-exception';
 import { WsParamsFactory } from '../factories/ws-params-factory';
 import { ExceptionFiltersContext } from './exception-filters-context';
@@ -65,7 +66,6 @@ export class WsContextCreator {
       methodName,
       contextType,
     );
-
     const exceptionHandler = this.exceptionFiltersContext.create(
       instance,
       callback,
@@ -107,20 +107,26 @@ export class WsContextCreator {
       }
       return callback.apply(instance, args);
     };
+    const targetPattern = this.reflectCallbackPattern(callback);
+    return this.wsProxy.create(
+      async (...args: unknown[]) => {
+        args.push(targetPattern);
 
-    return this.wsProxy.create(async (...args: unknown[]) => {
-      const initialArgs = this.contextUtils.createNullArray(argsLength);
-      fnCanActivate && (await fnCanActivate(args));
+        const initialArgs = this.contextUtils.createNullArray(argsLength);
+        fnCanActivate && (await fnCanActivate(args));
 
-      return this.interceptorsConsumer.intercept(
-        interceptors,
-        args,
-        instance,
-        callback,
-        handler(initialArgs, args),
-        contextType,
-      );
-    }, exceptionHandler);
+        return this.interceptorsConsumer.intercept(
+          interceptors,
+          args,
+          instance,
+          callback,
+          handler(initialArgs, args),
+          contextType,
+        );
+      },
+      exceptionHandler,
+      targetPattern,
+    );
   }
 
   public reflectCallbackParamtypes(
@@ -128,6 +134,10 @@ export class WsContextCreator {
     callback: (...args: any[]) => any,
   ): any[] {
     return Reflect.getMetadata(PARAMTYPES_METADATA, instance, callback.name);
+  }
+
+  public reflectCallbackPattern(callback: (...args: any[]) => any): string {
+    return Reflect.getMetadata(MESSAGE_METADATA, callback);
   }
 
   public createGuardsFn<TContext extends string = ContextType>(
@@ -210,7 +220,7 @@ export class WsContextCreator {
         this.pipesContextCreator.createConcreteContext(pipesCollection);
       const type = this.contextUtils.mapParamType(key);
 
-      if (key.includes(CUSTOM_ROUTE_AGRS_METADATA)) {
+      if (key.includes(CUSTOM_ROUTE_ARGS_METADATA)) {
         const { factory } = metadata[key];
         const customExtractValue = this.contextUtils.getCustomFactory(
           factory,

@@ -8,6 +8,9 @@ import { fromEvent, Observable } from 'rxjs';
 import { filter, first, map, mergeMap, share, takeUntil } from 'rxjs/operators';
 import { Server, ServerOptions, Socket } from 'socket.io';
 
+/**
+ * @publicApi
+ */
 export class IoAdapter extends AbstractWsAdapter {
   public create(
     port: number,
@@ -20,8 +23,8 @@ export class IoAdapter extends AbstractWsAdapter {
     return server && isFunction(server.of)
       ? server.of(namespace)
       : namespace
-      ? this.createIOServer(port, opt).of(namespace)
-      : this.createIOServer(port, opt);
+        ? this.createIOServer(port, opt).of(namespace)
+        : this.createIOServer(port, opt);
   }
 
   public createIOServer(port: number, options?: any): any {
@@ -64,7 +67,7 @@ export class IoAdapter extends AbstractWsAdapter {
   public mapPayload(payload: unknown): { data: any; ack?: Function } {
     if (!Array.isArray(payload)) {
       if (isFunction(payload)) {
-        return { data: undefined, ack: payload as Function };
+        return { data: undefined, ack: payload };
       }
       return { data: payload };
     }
@@ -78,5 +81,13 @@ export class IoAdapter extends AbstractWsAdapter {
       };
     }
     return { data: payload };
+  }
+
+  public async close(server: Server): Promise<void> {
+    if (this.forceCloseConnections && server.httpServer === this.httpServer) {
+      return;
+    }
+
+    return super.close(server);
   }
 }

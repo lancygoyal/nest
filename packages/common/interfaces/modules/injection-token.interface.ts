@@ -1,9 +1,12 @@
 import { Abstract } from '../abstract.interface';
 import { Type } from '../type.interface';
 
-export type InjectionToken =
+/**
+ * @publicApi
+ */
+export type InjectionToken<T = any> =
   | string
   | symbol
-  | Type<any>
-  | Abstract<any>
+  | Type<T>
+  | Abstract<T>
   | Function;

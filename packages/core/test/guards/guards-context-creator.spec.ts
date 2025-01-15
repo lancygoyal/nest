@@ -79,7 +79,7 @@ describe('GuardsContextCreator', () => {
   describe('getGuardInstance', () => {
     describe('when param is an object', () => {
       it('should return instance', () => {
-        const instance = { canActivate: () => null };
+        const instance = { canActivate: () => null! };
         expect(guardsContextCreator.getGuardInstance(instance)).to.be.eql(
           instance,
         );
@@ -101,7 +101,7 @@ describe('GuardsContextCreator', () => {
       it('should return null', () => {
         sinon
           .stub(guardsContextCreator, 'getInstanceByMetatype')
-          .callsFake(() => null);
+          .callsFake(() => null!);
         expect(guardsContextCreator.getGuardInstance(Guard)).to.be.eql(null);
       });
     });
@@ -111,7 +111,7 @@ describe('GuardsContextCreator', () => {
     describe('when "moduleContext" is nil', () => {
       it('should return undefined', () => {
         (guardsContextCreator as any).moduleContext = undefined;
-        expect(guardsContextCreator.getInstanceByMetatype(null)).to.be
+        expect(guardsContextCreator.getInstanceByMetatype(null!)).to.be
           .undefined;
       });
     });
@@ -154,7 +154,7 @@ describe('GuardsContextCreator', () => {
           .callsFake(() => scopedGuardWrappers);
         sinon
           .stub(instanceWrapper, 'getInstanceByContextId')
-          .callsFake(() => ({ instance } as any));
+          .callsFake(() => ({ instance }) as any);
 
         expect(guardsContextCreator.getGlobalMetadata({ id: 3 })).to.contains(
           instance,

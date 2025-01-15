@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { Transport } from '@nestjs/microservices';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
 import { expect } from 'chai';
 import * as request from 'supertest';
@@ -17,7 +17,7 @@ describe('MQTT transport', () => {
     app = module.createNestApplication();
     server = app.getHttpAdapter().getInstance();
 
-    app.connectMicroservice({
+    app.connectMicroservice<MicroserviceOptions>({
       transport: Transport.MQTT,
       options: {
         url: 'mqtt://0.0.0.0:1883',
@@ -75,7 +75,7 @@ describe('MQTT transport', () => {
   }).timeout(5000);
 
   it(`/POST (event notification)`, done => {
-    request(server)
+    void request(server)
       .post('/notify')
       .send([1, 2, 3, 4, 5])
       .end(() => {
@@ -87,7 +87,7 @@ describe('MQTT transport', () => {
   });
 
   it(`/POST (wildcard EVENT #)`, done => {
-    request(server)
+    void request(server)
       .post('/wildcard-event')
       .send([1, 2, 3, 4, 5])
       .end(() => {
@@ -106,7 +106,7 @@ describe('MQTT transport', () => {
   });
 
   it(`/POST (wildcard EVENT +)`, done => {
-    request(server)
+    void request(server)
       .post('/wildcard-event2')
       .send([1, 2, 3, 4, 5])
       .end(() => {
@@ -125,7 +125,7 @@ describe('MQTT transport', () => {
   });
 
   it(`/POST (shared wildcard EVENT #)`, done => {
-    request(server)
+    void request(server)
       .post('/shared-wildcard-event')
       .send([1, 2, 3, 4, 5])
       .end(() => {
@@ -144,7 +144,7 @@ describe('MQTT transport', () => {
   });
 
   it(`/POST (shared wildcard EVENT +)`, done => {
-    request(server)
+    void request(server)
       .post('/shared-wildcard-event2')
       .send([1, 2, 3, 4, 5])
       .end(() => {

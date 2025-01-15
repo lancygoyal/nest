@@ -1,11 +1,12 @@
 import {
   DynamicModule,
+  ForwardReference,
   Module,
   OnApplicationShutdown,
   Provider,
+  Type,
 } from '@nestjs/common';
 import { ClientProxy, ClientProxyFactory } from '../client';
-import { Closeable } from '../interfaces';
 import {
   ClientsModuleAsyncOptions,
   ClientsModuleOptions,
@@ -16,34 +17,47 @@ import {
 @Module({})
 export class ClientsModule {
   static register(options: ClientsModuleOptions): DynamicModule {
-    const clients = (options || []).map(item => ({
-      provide: item.name,
-      useValue: this.assignOnAppShutdownHook(ClientProxyFactory.create(item)),
-    }));
+    const clientsOptions = !Array.isArray(options) ? options.clients : options;
+    const clients = (clientsOptions || []).map(item => {
+      return {
+        provide: item.name,
+        useValue: this.assignOnAppShutdownHook(ClientProxyFactory.create(item)),
+      };
+    });
     return {
       module: ClientsModule,
+      global: !Array.isArray(options) && options.isGlobal,
       providers: clients,
       exports: clients,
     };
   }
 
   static registerAsync(options: ClientsModuleAsyncOptions): DynamicModule {
-    const providers: Provider[] = options.reduce(
+    const clientsOptions = !Array.isArray(options) ? options.clients : options;
+    const providers: Provider[] = clientsOptions.reduce(
       (accProviders: Provider[], item) =>
         accProviders
           .concat(this.createAsyncProviders(item))
           .concat(item.extraProviders || []),
       [],
     );
-    const imports = options.reduce(
-      (accImports, option) =>
-        option.imports && !accImports.includes(option.imports)
-          ? accImports.concat(option.imports)
-          : accImports,
-      [],
+    const imports = clientsOptions.reduce(
+      (accImports, option) => {
+        if (!option.imports) {
+          return accImports;
+        }
+        const toInsert = option.imports.filter(
+          item => !accImports.includes(item),
+        );
+        return accImports.concat(toInsert);
+      },
+      [] as Array<
+        DynamicModule | Promise<DynamicModule> | ForwardReference | Type
+      >,
     );
     return {
       module: ClientsModule,
+      global: !Array.isArray(options) && options.isGlobal,
       imports,
       providers: providers,
       exports: providers,
@@ -59,8 +73,8 @@ export class ClientsModule {
     return [
       this.createAsyncOptionsProvider(options),
       {
-        provide: options.useClass,
-        useClass: options.useClass,
+        provide: options.useClass!,
+        useClass: options.useClass!,
       },
     ];
   }
@@ -81,7 +95,7 @@ export class ClientsModule {
         (optionsFactory: ClientsModuleOptionsFactory) =>
           optionsFactory.createClientOptions(),
       ),
-      inject: [options.useExisting || options.useClass],
+      inject: [options.useExisting || options.useClass!],
     };
   }
 
@@ -89,13 +103,13 @@ export class ClientsModule {
     useFactory: ClientsProviderAsyncOptions['useFactory'],
   ) {
     return async (...args: any[]) => {
-      const clientOptions = await useFactory(...args);
+      const clientOptions = await useFactory!(...args);
       const clientProxyRef = ClientProxyFactory.create(clientOptions);
       return this.assignOnAppShutdownHook(clientProxyRef);
     };
   }
 
-  private static assignOnAppShutdownHook(client: ClientProxy & Closeable) {
+  private static assignOnAppShutdownHook(client: ClientProxy) {
     (client as unknown as OnApplicationShutdown).onApplicationShutdown =
       client.close;
     return client;

@@ -5,6 +5,7 @@ import {
   HttpServer,
   HttpStatus,
   Inject,
+  IntrinsicException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -25,7 +26,7 @@ export class BaseExceptionFilter<T = any> implements ExceptionFilter<T> {
   catch(exception: T, host: ArgumentsHost) {
     const applicationRef =
       this.applicationRef ||
-      (this.httpAdapterHost && this.httpAdapterHost.httpAdapter);
+      (this.httpAdapterHost && this.httpAdapterHost.httpAdapter)!;
 
     if (!(exception instanceof HttpException)) {
       return this.handleUnknownError(exception, host, applicationRef);
@@ -38,7 +39,12 @@ export class BaseExceptionFilter<T = any> implements ExceptionFilter<T> {
           message: res,
         };
 
-    applicationRef.reply(host.getArgByIndex(1), message, exception.getStatus());
+    const response = host.getArgByIndex(1);
+    if (!applicationRef.isHeadersSent(response)) {
+      applicationRef.reply(response, message, exception.getStatus());
+    } else {
+      applicationRef.end(response);
+    }
   }
 
   public handleUnknownError(
@@ -55,14 +61,17 @@ export class BaseExceptionFilter<T = any> implements ExceptionFilter<T> {
           statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
           message: MESSAGES.UNKNOWN_EXCEPTION_MESSAGE,
         };
-    applicationRef.reply(host.getArgByIndex(1), body, body.statusCode);
-    if (this.isExceptionObject(exception)) {
-      return BaseExceptionFilter.logger.error(
-        exception.message,
-        exception.stack,
-      );
+
+    const response = host.getArgByIndex(1);
+    if (!applicationRef.isHeadersSent(response)) {
+      applicationRef.reply(response, body, body.statusCode);
+    } else {
+      applicationRef.end(response);
     }
-    return BaseExceptionFilter.logger.error(exception);
+
+    if (!(exception instanceof IntrinsicException)) {
+      BaseExceptionFilter.logger.error(exception);
+    }
   }
 
   public isExceptionObject(err: any): err is Error {

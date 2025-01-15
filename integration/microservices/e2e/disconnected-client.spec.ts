@@ -2,10 +2,11 @@ import { INestApplication } from '@nestjs/common';
 import { Transport } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
+import { App } from 'supertest/types';
 import { DisconnectedClientController } from '../src/disconnected.controller';
 
 describe('Disconnected client', () => {
-  let server;
+  let server: App;
   let app: INestApplication;
 
   beforeEach(async () => {
@@ -34,7 +35,7 @@ describe('Disconnected client', () => {
       .send({
         transport: Transport.REDIS,
         options: {
-          url: 'redis://localhost:3333',
+          port: '3333',
         },
       })
       .expect(408);

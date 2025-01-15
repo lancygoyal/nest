@@ -1,41 +1,48 @@
 import { isUndefined } from '@nestjs/common/utils/shared.utils';
-import { Observable } from 'rxjs';
 import {
-  CONNECT_EVENT,
-  ERROR_EVENT,
-  MESSAGE_EVENT,
   NO_MESSAGE_HANDLER,
-  REDIS_DEFAULT_URL,
+  REDIS_DEFAULT_HOST,
+  REDIS_DEFAULT_PORT,
 } from '../constants';
 import { RedisContext } from '../ctx-host';
 import { Transport } from '../enums';
 import {
-  ClientOpts,
-  RedisClient,
-  RetryStrategyOptions,
-} from '../external/redis.interface';
-import { CustomTransportStrategy, IncomingRequest } from '../interfaces';
-import { RedisOptions } from '../interfaces/microservice-configuration.interface';
+  RedisEvents,
+  RedisEventsMap,
+  RedisStatus,
+} from '../events/redis.events';
+import { IncomingRequest, RedisOptions } from '../interfaces';
 import { Server } from './server';
 
-let redisPackage: any = {};
+// To enable type safety for Redis. This cant be uncommented by default
+// because it would require the user to install the ioredis package even if they dont use Redis
+// Otherwise, TypeScript would fail to compile the code.
+//
+// type Redis = import('ioredis').Redis;
+type Redis = any;
 
-export class ServerRedis extends Server implements CustomTransportStrategy {
+let redisPackage = {} as any;
+
+/**
+ * @publicApi
+ */
+export class ServerRedis extends Server<RedisEvents, RedisStatus> {
   public readonly transportId = Transport.REDIS;
 
-  private readonly url: string;
-  private subClient: RedisClient;
-  private pubClient: RedisClient;
-  private isExplicitlyTerminated = false;
+  protected subClient: Redis;
+  protected pubClient: Redis;
+  protected isManuallyClosed = false;
+  protected wasInitialConnectionSuccessful = false;
+  protected pendingEventListeners: Array<{
+    event: keyof RedisEvents;
+    callback: RedisEvents[keyof RedisEvents];
+  }> = [];
 
-  constructor(private readonly options: RedisOptions['options']) {
+  constructor(protected readonly options: Required<RedisOptions>['options']) {
     super();
-    this.url =
-      this.getOptionsProp(options, 'url') ||
-      (!this.getOptionsProp(options, 'host') && REDIS_DEFAULT_URL);
 
-    redisPackage = this.loadPackage('redis', ServerRedis.name, () =>
-      require('redis'),
+    redisPackage = this.loadPackage('ioredis', ServerRedis.name, () =>
+      require('ioredis'),
     );
 
     this.initializeSerializer(options);
@@ -49,8 +56,18 @@ export class ServerRedis extends Server implements CustomTransportStrategy {
       this.subClient = this.createRedisClient();
       this.pubClient = this.createRedisClient();
 
-      this.handleError(this.pubClient);
-      this.handleError(this.subClient);
+      [this.subClient, this.pubClient].forEach((client, index) => {
+        const type = index === 0 ? 'pub' : 'sub';
+        this.registerErrorListener(client);
+        this.registerReconnectListener(client);
+        this.registerReadyListener(client);
+        this.registerEndListener(client);
+        this.pendingEventListeners.forEach(({ event, callback }) =>
+          client.on(event, (...args: [any]) => callback(type, ...args)),
+        );
+      });
+      this.pendingEventListeners = [];
+
       this.start(callback);
     } catch (err) {
       callback(err);
@@ -58,47 +75,68 @@ export class ServerRedis extends Server implements CustomTransportStrategy {
   }
 
   public start(callback?: () => void) {
-    this.bindEvents(this.subClient, this.pubClient);
-    this.subClient.on(CONNECT_EVENT, callback);
+    void Promise.all([this.subClient.connect(), this.pubClient.connect()])
+      .then(() => {
+        this.bindEvents(this.subClient, this.pubClient);
+        callback?.();
+      })
+      .catch(callback);
   }
 
-  public bindEvents(subClient: RedisClient, pubClient: RedisClient) {
-    subClient.on(MESSAGE_EVENT, this.getMessageHandler(pubClient).bind(this));
+  public bindEvents(subClient: Redis, pubClient: Redis) {
+    subClient.on(
+      this.options?.wildcards ? 'pmessage' : 'message',
+      this.getMessageHandler(pubClient).bind(this),
+    );
     const subscribePatterns = [...this.messageHandlers.keys()];
     subscribePatterns.forEach(pattern => {
-      const { isEventHandler } = this.messageHandlers.get(pattern);
-      subClient.subscribe(
-        isEventHandler ? pattern : this.getRequestPattern(pattern),
-      );
+      const { isEventHandler } = this.messageHandlers.get(pattern)!;
+
+      const channel = isEventHandler
+        ? pattern
+        : this.getRequestPattern(pattern);
+
+      if (this.options?.wildcards) {
+        subClient.psubscribe(channel);
+      } else {
+        subClient.subscribe(channel);
+      }
     });
   }
 
   public close() {
-    this.isExplicitlyTerminated = true;
+    this.isManuallyClosed = true;
     this.pubClient && this.pubClient.quit();
     this.subClient && this.subClient.quit();
+    this.pendingEventListeners = [];
   }
 
-  public createRedisClient(): RedisClient {
-    return redisPackage.createClient({
+  public createRedisClient(): Redis {
+    return new redisPackage({
+      port: REDIS_DEFAULT_PORT,
+      host: REDIS_DEFAULT_HOST,
       ...this.getClientOptions(),
-      url: this.url,
+      lazyConnect: true,
     });
   }
 
-  public getMessageHandler(pub: RedisClient) {
-    return async (channel: string, buffer: string | any) =>
-      this.handleMessage(channel, buffer, pub);
+  public getMessageHandler(pub: Redis) {
+    return this.options?.wildcards
+      ? (channel: string, pattern: string, buffer: string) =>
+          this.handleMessage(channel, buffer, pub, pattern)
+      : (channel: string, buffer: string) =>
+          this.handleMessage(channel, buffer, pub, channel);
   }
 
   public async handleMessage(
     channel: string,
-    buffer: string | any,
-    pub: RedisClient,
+    buffer: string,
+    pub: Redis,
+    pattern: string,
   ) {
     const rawMessage = this.parseMessage(buffer);
     const packet = await this.deserializer.deserialize(rawMessage, { channel });
-    const redisCtx = new RedisContext([channel]);
+    const redisCtx = new RedisContext([pattern]);
 
     if (isUndefined((packet as IncomingRequest).id)) {
       return this.handleEvent(channel, packet, redisCtx);
@@ -125,7 +163,7 @@ export class ServerRedis extends Server implements CustomTransportStrategy {
     response$ && this.send(response$, publish);
   }
 
-  public getPublisher(pub: RedisClient, pattern: any, id: string) {
+  public getPublisher(pub: Redis, pattern: any, id: string) {
     return (response: any) => {
       Object.assign(response, { id });
       const outgoingResponse = this.serializer.serialize(response);
@@ -153,36 +191,98 @@ export class ServerRedis extends Server implements CustomTransportStrategy {
     return `${pattern}.reply`;
   }
 
-  public handleError(stream: any) {
-    stream.on(ERROR_EVENT, (err: any) => this.logger.error(err));
+  public registerErrorListener(client: any) {
+    client.on(RedisEventsMap.ERROR, (err: any) => this.logger.error(err));
   }
 
-  public getClientOptions(): Partial<ClientOpts> {
-    const retry_strategy = (options: RetryStrategyOptions) =>
-      this.createRetryStrategy(options);
+  public registerReconnectListener(client: {
+    on: (event: string, fn: () => void) => void;
+  }) {
+    client.on(RedisEventsMap.RECONNECTING, () => {
+      if (this.isManuallyClosed) {
+        return;
+      }
+      this._status$.next(RedisStatus.RECONNECTING);
+
+      if (this.wasInitialConnectionSuccessful) {
+        this.logger.log('Reconnecting to Redis...');
+      }
+    });
+  }
+
+  public registerReadyListener(client: {
+    on: (event: string, fn: () => void) => void;
+  }) {
+    client.on(RedisEventsMap.READY, () => {
+      this._status$.next(RedisStatus.CONNECTED);
+
+      this.logger.log('Connected to Redis. Subscribing to channels...');
+
+      if (!this.wasInitialConnectionSuccessful) {
+        this.wasInitialConnectionSuccessful = true;
+      }
+    });
+  }
+
+  public registerEndListener(client: {
+    on: (event: string, fn: () => void) => void;
+  }) {
+    client.on('end', () => {
+      if (this.isManuallyClosed) {
+        return;
+      }
+      this._status$.next(RedisStatus.DISCONNECTED);
+
+      this.logger.error(
+        'Disconnected from Redis. No further reconnection attempts will be made.',
+      );
+    });
+  }
+
+  public getClientOptions(): Partial<RedisOptions['options']> {
+    const retryStrategy = (times: number) => this.createRetryStrategy(times);
 
     return {
       ...(this.options || {}),
-      retry_strategy,
+      retryStrategy,
     };
   }
 
-  public createRetryStrategy(
-    options: RetryStrategyOptions,
-  ): undefined | number | void {
-    if (options.error && (options.error as any).code === 'ECONNREFUSED') {
-      this.logger.error(`Error ECONNREFUSED: ${this.url}`);
-    }
-    if (this.isExplicitlyTerminated) {
+  public createRetryStrategy(times: number): undefined | number | void {
+    if (this.isManuallyClosed) {
       return undefined;
     }
-    if (
-      !this.getOptionsProp(this.options, 'retryAttempts') ||
-      options.attempt > this.getOptionsProp(this.options, 'retryAttempts')
-    ) {
-      this.logger.error(`Retry time exhausted: ${this.url}`);
-      throw new Error('Retry time exhausted');
+    if (!this.getOptionsProp(this.options, 'retryAttempts')) {
+      this.logger.error(
+        'Redis connection closed and retry attempts not specified',
+      );
+      return;
     }
-    return this.getOptionsProp(this.options, 'retryDelay') || 0;
+    if (times > this.getOptionsProp(this.options, 'retryAttempts', 0)) {
+      this.logger.error(`Retry time exhausted`);
+      return;
+    }
+    return this.getOptionsProp(this.options, 'retryDelay', 5000);
+  }
+
+  public unwrap<T>(): T {
+    if (!this.pubClient || !this.subClient) {
+      throw new Error(
+        'Not initialized. Please call the "listen"/"startAllMicroservices" method before accessing the server.',
+      );
+    }
+    return [this.pubClient, this.subClient] as T;
+  }
+
+  public on<
+    EventKey extends keyof RedisEvents = keyof RedisEvents,
+    EventCallback extends RedisEvents[EventKey] = RedisEvents[EventKey],
+  >(event: EventKey, callback: EventCallback) {
+    if (this.subClient && this.pubClient) {
+      this.subClient.on(event, (...args: [any]) => callback('sub', ...args));
+      this.pubClient.on(event, (...args: [any]) => callback('pub', ...args));
+    } else {
+      this.pendingEventListeners.push({ event, callback });
+    }
   }
 }

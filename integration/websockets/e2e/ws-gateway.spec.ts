@@ -10,17 +10,17 @@ import { ServerGateway } from '../src/server.gateway';
 import { WsPathGateway } from '../src/ws-path.gateway';
 import { WsPathGateway2 } from '../src/ws-path2.gateway';
 
-async function createNestApp(...gateways): Promise<INestApplication> {
+async function createNestApp(...gateways: any[]): Promise<INestApplication> {
   const testingModule = await Test.createTestingModule({
     providers: gateways,
   }).compile();
-  const app = await testingModule.createNestApplication();
+  const app = testingModule.createNestApplication();
   app.useWebSocketAdapter(new WsAdapter(app) as any);
   return app;
 }
 
 describe('WebSocketGateway (WsAdapter)', () => {
-  let ws, ws2, app;
+  let ws: WebSocket, ws2: WebSocket, app: INestApplication;
 
   it(`should handle message (2nd port)`, async () => {
     app = await createNestApp(ApplicationGateway);
@@ -39,7 +39,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
     );
     await new Promise<void>(resolve =>
       ws.on('message', data => {
-        expect(JSON.parse(data).data.test).to.be.eql('test');
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws.close();
         resolve();
       }),
     );
@@ -62,7 +63,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
     );
     await new Promise<void>(resolve =>
       ws.on('message', data => {
-        expect(JSON.parse(data).data.test).to.be.eql('test');
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws.close();
         resolve();
       }),
     );
@@ -70,7 +72,7 @@ describe('WebSocketGateway (WsAdapter)', () => {
 
   it(`should handle message on a different path`, async () => {
     app = await createNestApp(WsPathGateway);
-    await app.listenAsync(3000);
+    await app.listen(3000);
     try {
       ws = new WebSocket('ws://localhost:3000/ws-path');
       await new Promise((resolve, reject) => {
@@ -88,7 +90,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
       );
       await new Promise<void>(resolve =>
         ws.on('message', data => {
-          expect(JSON.parse(data).data.test).to.be.eql('test');
+          expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+          ws.close();
           resolve();
         }),
       );
@@ -101,7 +104,7 @@ describe('WebSocketGateway (WsAdapter)', () => {
     this.retries(10);
 
     app = await createNestApp(ExamplePathGateway, WsPathGateway2);
-    await app.listenAsync(3000);
+    await app.listen(3000);
 
     // open websockets delay
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -112,7 +115,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
     await new Promise<void>(resolve =>
       ws.on('open', () => {
         ws.on('message', data => {
-          expect(JSON.parse(data).data.test).to.be.eql('test');
+          expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+          ws.close();
           resolve();
         });
         ws.send(
@@ -128,7 +132,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
 
     await new Promise<void>(resolve => {
       ws2.on('message', data => {
-        expect(JSON.parse(data).data.test).to.be.eql('test');
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws2.close();
         resolve();
       });
       ws2.send(
@@ -140,7 +145,7 @@ describe('WebSocketGateway (WsAdapter)', () => {
         }),
       );
     });
-  });
+  }).timeout(5000);
 
   it(`should support 2 different gateways running on the same path (but different ports)`, async function () {
     this.retries(10);
@@ -157,7 +162,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
     await new Promise<void>(resolve =>
       ws.on('open', () => {
         ws.on('message', data => {
-          expect(JSON.parse(data).data.test).to.be.eql('test');
+          expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+          ws.close();
           resolve();
         });
         ws.send(
@@ -173,7 +179,8 @@ describe('WebSocketGateway (WsAdapter)', () => {
 
     await new Promise<void>(resolve => {
       ws2.on('message', data => {
-        expect(JSON.parse(data).data.test).to.be.eql('test');
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws2.close();
         resolve();
       });
       ws2.send(
@@ -187,5 +194,86 @@ describe('WebSocketGateway (WsAdapter)', () => {
     });
   });
 
-  afterEach(() => app.close());
+  it('should let the execution context have a getPattern() method on getClient()', async () => {
+    app = await createNestApp(ApplicationGateway);
+    await app.listen(3000);
+
+    ws = new WebSocket('ws://localhost:8080');
+    await new Promise(resolve => ws.on('open', resolve));
+
+    ws.send(
+      JSON.stringify({
+        event: 'getClient',
+        data: {
+          test: 'test',
+        },
+      }),
+    );
+    await new Promise<void>(resolve =>
+      ws.on('message', data => {
+        expect(JSON.parse(data.toString()).data.path).to.be.eql('getClient');
+        ws.close();
+        resolve();
+      }),
+    );
+  });
+
+  it('should set messageParser by using setMessageParser method', async () => {
+    const testingModule = await Test.createTestingModule({
+      providers: [ApplicationGateway],
+    }).compile();
+    app = testingModule.createNestApplication();
+
+    const wsAdapter = new WsAdapter(app);
+    wsAdapter.setMessageParser(data => {
+      const [event, payload] = JSON.parse(data.toString());
+      return { event, data: payload };
+    });
+    app.useWebSocketAdapter(wsAdapter);
+    await app.listen(3000);
+
+    ws = new WebSocket('ws://localhost:8080');
+    await new Promise(resolve => ws.on('open', resolve));
+
+    ws.send(JSON.stringify(['push', { test: 'test' }]));
+    await new Promise<void>(resolve =>
+      ws.on('message', data => {
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws.close();
+        resolve();
+      }),
+    );
+  });
+
+  it('should set messageParser by using constructor options', async () => {
+    const testingModule = await Test.createTestingModule({
+      providers: [ApplicationGateway],
+    }).compile();
+    app = testingModule.createNestApplication();
+
+    const wsAdapter = new WsAdapter(app, {
+      messageParser: data => {
+        const [event, payload] = JSON.parse(data.toString());
+        return { event, data: payload };
+      },
+    });
+    app.useWebSocketAdapter(wsAdapter);
+    await app.listen(3000);
+
+    ws = new WebSocket('ws://localhost:8080');
+    await new Promise(resolve => ws.on('open', resolve));
+
+    ws.send(JSON.stringify(['push', { test: 'test' }]));
+    await new Promise<void>(resolve =>
+      ws.on('message', data => {
+        expect(JSON.parse(data.toString()).data.test).to.be.eql('test');
+        ws.close();
+        resolve();
+      }),
+    );
+  });
+
+  afterEach(async function () {
+    await app.close();
+  });
 });

@@ -1,5 +1,8 @@
 import { isObject, isString } from '@nestjs/common/utils/shared.utils';
 
+/**
+ * @publicApi
+ */
 export class RpcException extends Error {
   constructor(private readonly error: string | object) {
     super();
@@ -16,7 +19,7 @@ export class RpcException extends Error {
       this.message = (this.error as Record<string, any>).message;
     } else if (this.constructor) {
       this.message = this.constructor.name
-        .match(/[A-Z][a-z]+|[0-9]+/g)
+        .match(/[A-Z][a-z]+|[0-9]+/g)!
         .join(' ');
     }
   }

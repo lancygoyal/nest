@@ -4,7 +4,7 @@ A simple example of GraphQL Federation using Code First approach.
 
 ## Execution
 
-Make sure to start the two sub-graph applications first, then the gatway. Otherwise the gateway won't be able to fetch schemas from the sub-graphs.
+Make sure to start the two sub-graph applications first, then the gateway. Otherwise the gateway won't be able to fetch schemas from the sub-graphs.
 
 ```sh
 cd users-application && npm run start
@@ -20,7 +20,7 @@ cd gateway && npm run start
 
 ## Access the graph
 
-You can reach the gateway under `http://localhost:3002/graphql`
+You can reach the gateway under `http://localhost:3001/graphql`
 
 ## Query a combined graph
 

@@ -13,6 +13,8 @@ import { ApplicationConfig } from '../../application-config';
 import { NestContainer } from '../../injector';
 import { Injector } from '../../injector/injector';
 import { InstanceWrapper } from '../../injector/instance-wrapper';
+import { GraphInspector } from '../../inspector/graph-inspector';
+import { SerializedGraph } from '../../inspector/serialized-graph';
 import { RoutesResolver } from '../../router/routes-resolver';
 import { NoopHttpAdapter } from '../utils/noop-adapter.spec';
 
@@ -50,6 +52,7 @@ describe('RoutesResolver', () => {
 
   let router: any;
   let routesResolver: RoutesResolver;
+  let untypedRoutesResolver: any;
   let container: NestContainer;
   let modules: Map<string, any>;
   let applicationRef: any;
@@ -65,6 +68,7 @@ describe('RoutesResolver', () => {
       getModules: () => modules,
       getModuleByKey: (key: string) => modules.get(key),
       getHttpAdapterRef: () => applicationRef,
+      serializedGraph: new SerializedGraph(),
     } as any;
     router = {
       get() {},
@@ -77,7 +81,9 @@ describe('RoutesResolver', () => {
       container,
       new ApplicationConfig(),
       new Injector(),
+      new GraphInspector(container),
     );
+    untypedRoutesResolver = routesResolver as any;
   });
 
   describe('registerRouters', () => {
@@ -91,14 +97,14 @@ describe('RoutesResolver', () => {
 
       const appInstance = new NoopHttpAdapter(router);
       const exploreSpy = sinon.spy(
-        (routesResolver as any).routerExplorer,
+        untypedRoutesResolver.routerExplorer,
         'explore',
       );
       const moduleName = '';
       modules.set(moduleName, {});
 
       sinon
-        .stub((routesResolver as any).routerExplorer, 'extractRouterPath')
+        .stub(untypedRoutesResolver.routerExplorer, 'extractRouterPath')
         .callsFake(() => ['']);
       routesResolver.registerRouters(routes, moduleName, '', '', appInstance);
 
@@ -133,14 +139,14 @@ describe('RoutesResolver', () => {
 
       const appInstance = new NoopHttpAdapter(router);
       const exploreSpy = sinon.spy(
-        (routesResolver as any).routerExplorer,
+        untypedRoutesResolver.routerExplorer,
         'explore',
       );
       const moduleName = '';
       modules.set(moduleName, {});
 
       sinon
-        .stub((routesResolver as any).routerExplorer, 'extractRouterPath')
+        .stub(untypedRoutesResolver.routerExplorer, 'extractRouterPath')
         .callsFake(() => ['']);
       routesResolver.registerRouters(routes, moduleName, '', '', appInstance);
 
@@ -175,7 +181,9 @@ describe('RoutesResolver', () => {
         container,
         applicationConfig,
         new Injector(),
+        new GraphInspector(container),
       );
+      untypedRoutesResolver = routesResolver as any;
 
       const routes = new Map();
       const routeWrapper = new InstanceWrapper({
@@ -186,14 +194,14 @@ describe('RoutesResolver', () => {
 
       const appInstance = new NoopHttpAdapter(router);
       const exploreSpy = sinon.spy(
-        (routesResolver as any).routerExplorer,
+        untypedRoutesResolver.routerExplorer,
         'explore',
       );
       const moduleName = '';
       modules.set(moduleName, {});
 
       sinon
-        .stub((routesResolver as any).routerExplorer, 'extractRouterPath')
+        .stub(untypedRoutesResolver.routerExplorer, 'extractRouterPath')
         .callsFake(() => ['']);
       routesResolver.registerRouters(routes, moduleName, '', '', appInstance);
 

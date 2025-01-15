@@ -1,20 +1,22 @@
 import {
-  isObject,
-  isNumber,
   isNil,
+  isNumber,
+  isObject,
   isSymbol,
 } from '@nestjs/common/utils/shared.utils';
 import {
+  PATTERN_EXTRAS_METADATA,
   PATTERN_HANDLER_METADATA,
   PATTERN_METADATA,
   TRANSPORT_METADATA,
-  PATTERN_EXTRAS_METADATA,
 } from '../constants';
-import { PatternHandler } from '../enums/pattern-handler.enum';
 import { Transport } from '../enums';
+import { PatternHandler } from '../enums/pattern-handler.enum';
 
 /**
  * Subscribes to incoming events which fulfils chosen pattern.
+ *
+ * @publicApi
  */
 export const EventPattern: {
   <T = string>(metadata?: T): MethodDecorator;
@@ -41,21 +43,32 @@ export const EventPattern: {
     extras = transportOrExtras;
   } else {
     transport = transportOrExtras as Transport | symbol;
-    extras = maybeExtras;
+    extras = maybeExtras!;
   }
   return (
     target: object,
     key: string | symbol,
     descriptor: PropertyDescriptor,
   ) => {
-    Reflect.defineMetadata(PATTERN_METADATA, metadata, descriptor.value);
+    Reflect.defineMetadata(
+      PATTERN_METADATA,
+      ([] as any[]).concat(metadata),
+      descriptor.value,
+    );
     Reflect.defineMetadata(
       PATTERN_HANDLER_METADATA,
       PatternHandler.EVENT,
       descriptor.value,
     );
     Reflect.defineMetadata(TRANSPORT_METADATA, transport, descriptor.value);
-    Reflect.defineMetadata(PATTERN_EXTRAS_METADATA, extras, descriptor.value);
+    Reflect.defineMetadata(
+      PATTERN_EXTRAS_METADATA,
+      {
+        ...Reflect.getMetadata(PATTERN_EXTRAS_METADATA, descriptor.value),
+        ...extras,
+      },
+      descriptor.value,
+    );
     return descriptor;
   };
 };

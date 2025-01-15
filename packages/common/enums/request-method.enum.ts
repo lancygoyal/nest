@@ -7,4 +7,12 @@ export enum RequestMethod {
   ALL,
   OPTIONS,
   HEAD,
+  SEARCH,
+  PROPFIND,
+  PROPPATCH,
+  MKCOL,
+  COPY,
+  MOVE,
+  LOCK,
+  UNLOCK,
 }

@@ -40,6 +40,7 @@ function callOperator(
  * (providers / controllers).
  *
  * @param module The module which will be initialized
+ * @param signal
  */
 export async function callAppShutdownHook(
   module: Module,
@@ -48,7 +49,7 @@ export async function callAppShutdownHook(
   const providers = module.getNonAliasProviders();
   // Module (class) instance is the first element of the providers array
   // Lifecycle hook has to be called once all classes are properly initialized
-  const [_, moduleClassHost] = providers.shift();
+  const [_, moduleClassHost] = providers.shift()!;
   const instances = [
     ...module.controllers,
     ...providers,
@@ -68,8 +69,6 @@ export async function callAppShutdownHook(
     hasOnAppShutdownHook(moduleClassInstance) &&
     moduleClassHost.isDependencyTreeStatic()
   ) {
-    await (moduleClassInstance as OnApplicationShutdown).onApplicationShutdown(
-      signal,
-    );
+    await moduleClassInstance.onApplicationShutdown(signal);
   }
 }

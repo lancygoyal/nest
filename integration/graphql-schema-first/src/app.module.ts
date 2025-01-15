@@ -9,8 +9,9 @@ import { CatsModule } from './cats/cats.module';
     CatsModule,
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
+      includeStacktraceInErrorResponses: true,
       typePaths: [join(__dirname, '**', '*.graphql')],
     }),
   ],
 })
-export class ApplicationModule {}
+export class AppModule {}

@@ -3,15 +3,16 @@ import { ExpressAdapter } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import * as express from 'express';
 import * as request from 'supertest';
-import { ApplicationModule } from '../src/app.module';
+import { App } from 'supertest/types';
+import { AppModule } from '../src/app.module';
 
 describe('Hello world (express instance)', () => {
-  let server;
+  let server: App;
   let app: INestApplication;
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
-      imports: [ApplicationModule],
+      imports: [AppModule],
     }).compile();
 
     app = module.createNestApplication(new ExpressAdapter(express()));
@@ -43,6 +44,10 @@ describe('Hello world (express instance)', () => {
       error: 'Not Found',
       message: 'Cannot GET /host',
     });
+  });
+
+  it('/HEAD should respond to with a 200', () => {
+    return request(server).head('/hello').expect(200);
   });
 
   afterEach(async () => {

@@ -1,6 +1,6 @@
-import { RequestMethod, VersioningType, VERSION_NEUTRAL } from '@nestjs/common';
+import { RequestMethod, VERSION_NEUTRAL, VersioningType } from '@nestjs/common';
 import { expect } from 'chai';
-import * as pathToRegexp from 'path-to-regexp';
+import { pathToRegexp } from 'path-to-regexp';
 import * as sinon from 'sinon';
 import { ApplicationConfig } from '../../application-config';
 import { RoutePathFactory } from '../../router/route-path-factory';
@@ -247,7 +247,8 @@ describe('RoutePathFactory', () => {
           sinon.stub(applicationConfig, 'getGlobalPrefixOptions').returns({
             exclude: [
               {
-                pathRegex: pathToRegexp('/random'),
+                path: '/random',
+                pathRegex: pathToRegexp('/random').regexp,
                 requestMethod: RequestMethod.ALL,
               },
             ],
@@ -265,7 +266,8 @@ describe('RoutePathFactory', () => {
           sinon.stub(applicationConfig, 'getGlobalPrefixOptions').returns({
             exclude: [
               {
-                pathRegex: pathToRegexp('/cats'),
+                path: '/cats',
+                pathRegex: pathToRegexp('/cats').regexp,
                 requestMethod: RequestMethod.ALL,
               },
             ],
@@ -283,7 +285,8 @@ describe('RoutePathFactory', () => {
             sinon.stub(applicationConfig, 'getGlobalPrefixOptions').returns({
               exclude: [
                 {
-                  pathRegex: pathToRegexp('/cats'),
+                  path: '/cats',
+                  pathRegex: pathToRegexp('/cats').regexp,
                   requestMethod: RequestMethod.GET,
                 },
               ],

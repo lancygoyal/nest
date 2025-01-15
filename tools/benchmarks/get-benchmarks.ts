@@ -23,7 +23,13 @@ async function runBenchmarkOfLib(lib: string): Promise<WrkResults> {
   const libPath = join(BENCHMARK_PATH, `${lib}.js`);
   const process = spawn('node', [libPath], {
     detached: true,
-    stdio: 'ignore',
+  });
+
+  process.stdout!.on('data', data => {
+    console.log(`stdout: ${data}`);
+  });
+  process.stderr!.on('data', data => {
+    console.log(`stderr: ${data}`);
   });
 
   process.unref();
@@ -32,7 +38,7 @@ async function runBenchmarkOfLib(lib: string): Promise<WrkResults> {
 
   const result = await wrk({
     threads: 8,
-    duraton: '10s',
+    duration: '10s',
     connections: 1024,
     url: 'http://localhost:3000',
   });

@@ -25,8 +25,32 @@ export class NestApplicationContextOptions {
 
   /**
    * If enabled, logs will be automatically flushed and buffer detached when
-   * application initialisation process either completes or fails.
+   * application initialization process either completes or fails.
    * @default true
    */
   autoFlushLogs?: boolean;
+
+  /**
+   * Whether to run application in the preview mode.
+   * In the preview mode, providers/controllers are not instantiated & resolved.
+   *
+   * @default false
+   */
+  preview?: boolean;
+
+  /**
+   * Whether to generate a serialized graph snapshot.
+   *
+   * @default false
+   */
+  snapshot?: boolean;
+
+  /**
+   * Determines what algorithm use to generate module ids.
+   * When set to `deep-hash`, the module id is generated based on the serialized module definition.
+   * When set to `reference`, each module obtains a unique id based on its reference.
+   *
+   * @default 'reference'
+   */
+  moduleIdGeneratorAlgorithm?: 'deep-hash' | 'reference';
 }

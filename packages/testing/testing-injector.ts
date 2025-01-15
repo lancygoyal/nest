@@ -8,6 +8,9 @@ import { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
 import { Module } from '@nestjs/core/injector/module';
 import { MockFactory } from './interfaces';
 
+/**
+ * @publicApi
+ */
 export class TestingInjector extends Injector {
   protected mocker?: MockFactory;
   protected container: NestContainer;
@@ -56,6 +59,12 @@ export class TestingInjector extends Injector {
           metatype: wrapper.metatype,
         });
         const internalCoreModule = this.container.getInternalCoreModuleRef();
+        if (!internalCoreModule) {
+          throw new Error(
+            'Expected to have internal core module reference at this point.',
+          );
+        }
+
         internalCoreModule.addCustomProvider(
           {
             provide: name,
@@ -63,7 +72,7 @@ export class TestingInjector extends Injector {
           },
           internalCoreModule.providers,
         );
-        internalCoreModule.addExportedProvider(name);
+        internalCoreModule.addExportedProviderOrModule(name);
         return newWrapper;
       } else {
         throw err;

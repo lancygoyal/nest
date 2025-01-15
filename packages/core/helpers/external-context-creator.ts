@@ -1,24 +1,24 @@
 import { ForbiddenException, ParamData } from '@nestjs/common';
-import { CUSTOM_ROUTE_AGRS_METADATA } from '@nestjs/common/constants';
+import { CUSTOM_ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import {
   ContextType,
   Controller,
   PipeTransform,
 } from '@nestjs/common/interfaces';
-import { isEmpty, isFunction } from '@nestjs/common/utils/shared.utils';
-import { lastValueFrom, isObservable } from 'rxjs';
+import { isEmpty } from '@nestjs/common/utils/shared.utils';
+import { isObservable, lastValueFrom } from 'rxjs';
 import { ExternalExceptionFilterContext } from '../exceptions/external-exception-filter-context';
+import { GuardsConsumer, GuardsContextCreator } from '../guards';
 import { FORBIDDEN_MESSAGE } from '../guards/constants';
-import { GuardsConsumer } from '../guards/guards-consumer';
-import { GuardsContextCreator } from '../guards/guards-context-creator';
 import { STATIC_CONTEXT } from '../injector/constants';
 import { NestContainer } from '../injector/container';
 import { ContextId } from '../injector/instance-wrapper';
 import { ModulesContainer } from '../injector/modules-container';
-import { InterceptorsConsumer } from '../interceptors/interceptors-consumer';
-import { InterceptorsContextCreator } from '../interceptors/interceptors-context-creator';
-import { PipesConsumer } from '../pipes/pipes-consumer';
-import { PipesContextCreator } from '../pipes/pipes-context-creator';
+import {
+  InterceptorsConsumer,
+  InterceptorsContextCreator,
+} from '../interceptors';
+import { PipesConsumer, PipesContextCreator } from '../pipes';
 import { ContextUtils, ParamProperties } from './context-utils';
 import { ExternalErrorProxy } from './external-proxy';
 import { HandlerMetadataStorage } from './handler-metadata-storage';
@@ -106,7 +106,7 @@ export class ExternalContextCreator {
     },
     contextType: TContext = 'http' as TContext,
   ) {
-    const module = this.getContextModuleKey(instance.constructor);
+    const moduleKey = this.getContextModuleKey(instance.constructor);
     const { argsLength, paramtypes, getParamsMetadata } = this.getMetadata<
       TParamsMetadata,
       TContext
@@ -114,21 +114,21 @@ export class ExternalContextCreator {
     const pipes = this.pipesContextCreator.create(
       instance,
       callback,
-      module,
+      moduleKey,
       contextId,
       inquirerId,
     );
     const guards = this.guardsContextCreator.create(
       instance,
       callback,
-      module,
+      moduleKey,
       contextId,
       inquirerId,
     );
     const exceptionFilter = this.filtersContextCreator.create(
       instance,
-      callback,
-      module,
+      callback as (...args: any[]) => any,
+      moduleKey,
       contextId,
       inquirerId,
     );
@@ -136,13 +136,13 @@ export class ExternalContextCreator {
       ? this.interceptorsContextCreator.create(
           instance,
           callback,
-          module,
+          moduleKey,
           contextId,
           inquirerId,
         )
       : [];
 
-    const paramsMetadata = getParamsMetadata(module, contextId, inquirerId);
+    const paramsMetadata = getParamsMetadata(moduleKey, contextId, inquirerId);
     const paramsOptions = paramsMetadata
       ? this.contextUtils.mergeParamsMetatypes(paramsMetadata, paramtypes)
       : [];
@@ -208,7 +208,7 @@ export class ExternalContextCreator {
       methodName,
     );
     const contextFactory = this.contextUtils.getContextFactory<TContext>(
-      contextType,
+      contextType!,
       instance,
       instance[methodName],
     );
@@ -232,7 +232,7 @@ export class ExternalContextCreator {
     const handlerMetadata: ExternalHandlerMetadata = {
       argsLength,
       paramtypes,
-      getParamsMetadata,
+      getParamsMetadata: getParamsMetadata as any,
     };
     this.handlerMetadataStorage.set(instance, methodName, handlerMetadata);
     return handlerMetadata;
@@ -272,7 +272,7 @@ export class ExternalContextCreator {
       );
       const type = this.contextUtils.mapParamType(key);
 
-      if (key.includes(CUSTOM_ROUTE_AGRS_METADATA)) {
+      if (key.includes(CUSTOM_ROUTE_ARGS_METADATA)) {
         const { factory } = metadata[key];
         const customExtractValue = this.contextUtils.getCustomFactory(
           factory,

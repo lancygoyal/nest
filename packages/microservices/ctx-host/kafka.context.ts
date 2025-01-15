@@ -1,8 +1,18 @@
-import { KafkaMessage } from '../external/kafka.interface';
+import { Consumer, KafkaMessage, Producer } from '../external/kafka.interface';
 import { BaseRpcContext } from './base-rpc.context';
 
-type KafkaContextArgs = [KafkaMessage, number, string];
+type KafkaContextArgs = [
+  message: KafkaMessage,
+  partition: number,
+  topic: string,
+  consumer: Consumer,
+  heartbeat: () => Promise<void>,
+  producer: Producer,
+];
 
+/**
+ * @publicApi
+ */
 export class KafkaContext extends BaseRpcContext<KafkaContextArgs> {
   constructor(args: KafkaContextArgs) {
     super(args);
@@ -27,5 +37,26 @@ export class KafkaContext extends BaseRpcContext<KafkaContextArgs> {
    */
   getTopic() {
     return this.args[2];
+  }
+
+  /**
+   * Returns the Kafka consumer reference.
+   */
+  getConsumer() {
+    return this.args[3];
+  }
+
+  /**
+   * Returns the Kafka heartbeat callback.
+   */
+  getHeartbeat() {
+    return this.args[4];
+  }
+
+  /**
+   * Returns the Kafka producer reference,
+   */
+  getProducer() {
+    return this.args[5];
   }
 }

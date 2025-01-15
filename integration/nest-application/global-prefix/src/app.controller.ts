@@ -7,6 +7,11 @@ export class AppController {
     return 'Hello: ' + req.extras?.data;
   }
 
+  @Get('params')
+  getParams(@Req() req): any {
+    return req.middlewareParams;
+  }
+
   @Get('health')
   getHealth(): string {
     return 'up';
@@ -20,5 +25,15 @@ export class AppController {
   @Post('test')
   postTest(): string {
     return 'test';
+  }
+
+  @Get()
+  getHome(@Req() req) {
+    return 'Extras: ' + req.extras?.data + ', Count: ' + req.count;
+  }
+
+  @Get('count')
+  getCount(@Req() req) {
+    return req.count;
   }
 }

@@ -1,10 +1,10 @@
 import { INestApplication } from '@nestjs/common';
-import { Transport } from '@nestjs/microservices';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
 import { expect } from 'chai';
 import * as request from 'supertest';
 import { AppController } from '../src/app.controller';
-import { ApplicationModule } from '../src/app.module';
+import { AppModule } from '../src/app.module';
 
 describe('RPC transport', () => {
   let server;
@@ -12,13 +12,13 @@ describe('RPC transport', () => {
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
-      imports: [ApplicationModule],
+      imports: [AppModule],
     }).compile();
 
     app = module.createNestApplication();
     server = app.getHttpAdapter().getInstance();
 
-    app.connectMicroservice({
+    app.connectMicroservice<MicroserviceOptions>({
       transport: Transport.TCP,
       options: {
         host: '0.0.0.0',
@@ -94,7 +94,7 @@ describe('RPC transport', () => {
   });
 
   it(`/POST (event notification)`, done => {
-    request(server)
+    void request(server)
       .post('/notify')
       .send([1, 2, 3, 4, 5])
       .end(() => {

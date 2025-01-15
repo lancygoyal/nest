@@ -3,24 +3,41 @@ import {
   isString,
   isUndefined,
 } from '@nestjs/common/utils/shared.utils';
-import { EMPTY, fromEvent, lastValueFrom, Subject } from 'rxjs';
-import { catchError, takeUntil } from 'rxjs/operators';
 import {
-  CANCEL_EVENT,
-  GRPC_DEFAULT_PROTO_LOADER,
-  GRPC_DEFAULT_URL,
-} from '../constants';
+  EMPTY,
+  Observable,
+  ReplaySubject,
+  Subject,
+  Subscription,
+  defaultIfEmpty,
+  fromEvent,
+  lastValueFrom,
+} from 'rxjs';
+import { catchError, takeUntil } from 'rxjs/operators';
+import { GRPC_DEFAULT_PROTO_LOADER, GRPC_DEFAULT_URL } from '../constants';
 import { GrpcMethodStreamingType } from '../decorators';
 import { Transport } from '../enums';
 import { InvalidGrpcPackageException } from '../errors/invalid-grpc-package.exception';
 import { InvalidProtoDefinitionException } from '../errors/invalid-proto-definition.exception';
-import { CustomTransportStrategy, MessageHandler } from '../interfaces';
+import { ChannelOptions } from '../external/grpc-options.interface';
+import { getGrpcPackageDefinition } from '../helpers';
+import { MessageHandler } from '../interfaces';
 import { GrpcOptions } from '../interfaces/microservice-configuration.interface';
 import { Server } from './server';
-import { ChannelOptions } from '../external/grpc-options.interface';
 
-let grpcPackage: any = {};
-let grpcProtoLoaderPackage: any = {};
+const CANCELLED_EVENT = 'cancelled';
+
+// To enable type safety for gRPC. This cant be uncommented by default
+// because it would require the user to install the @grpc/grpc-js package even if they dont use gRPC
+// Otherwise, TypeScript would fail to compile the code.
+//
+// type GrpcServer = import('@grpc/grpc-js').Server;
+// let grpcPackage = {} as typeof import('@grpc/grpc-js');
+// let grpcProtoLoaderPackage = {} as typeof import('@grpc/proto-loader');
+
+type GrpcServer = any;
+let grpcPackage = {} as any;
+let grpcProtoLoaderPackage = {} as any;
 
 interface GrpcCall<TRequest = any, TMetadata = any> {
   request: TRequest;
@@ -29,16 +46,25 @@ interface GrpcCall<TRequest = any, TMetadata = any> {
   end: Function;
   write: Function;
   on: Function;
+  off: Function;
   emit: Function;
 }
 
-export class ServerGrpc extends Server implements CustomTransportStrategy {
+/**
+ * @publicApi
+ */
+export class ServerGrpc extends Server<never, never> {
   public readonly transportId = Transport.GRPC;
+  protected readonly url: string;
+  protected grpcClient: GrpcServer;
 
-  private readonly url: string;
-  private grpcClient: any;
+  get status(): never {
+    throw new Error(
+      'The "status" attribute is not supported by the gRPC transport',
+    );
+  }
 
-  constructor(private readonly options: GrpcOptions['options']) {
+  constructor(private readonly options: Readonly<GrpcOptions>['options']) {
     super();
     this.url = this.getOptionsProp(options, 'url') || GRPC_DEFAULT_URL;
 
@@ -71,8 +97,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
 
   public async start(callback?: () => void) {
     await this.bindEvents();
-    this.grpcClient.start();
-    callback();
+    callback?.();
   }
 
   public async bindEvents() {
@@ -84,7 +109,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
 
     for (const packageName of packageNames) {
       const grpcPkg = this.lookupPackage(grpcContext, packageName);
-      await this.createServices(grpcPkg);
+      await this.createServices(grpcPkg, packageName);
     }
   }
 
@@ -112,8 +137,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
     const service = {};
 
     for (const methodName in grpcService.prototype) {
-      let pattern = '';
-      let methodHandler = null;
+      let methodHandler: MessageHandler | null = null;
       let streamingType = GrpcMethodStreamingType.NO_STREAMING;
 
       const methodFunction = grpcService.prototype[methodName];
@@ -122,44 +146,60 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
       if (!isUndefined(methodReqStreaming) && methodReqStreaming) {
         // Try first pattern to be presented, RX streaming pattern would be
         // a preferable pattern to select among a few defined
-        pattern = this.createPattern(
+        methodHandler = this.getMessageHandler(
           name,
           methodName,
           GrpcMethodStreamingType.RX_STREAMING,
+          methodFunction,
         );
-        methodHandler = this.messageHandlers.get(pattern);
         streamingType = GrpcMethodStreamingType.RX_STREAMING;
         // If first pattern didn't match to any of handlers then try
         // pass-through handler to be presented
         if (!methodHandler) {
-          pattern = this.createPattern(
+          methodHandler = this.getMessageHandler(
             name,
             methodName,
             GrpcMethodStreamingType.PT_STREAMING,
+            methodFunction,
           );
-          methodHandler = this.messageHandlers.get(pattern);
           streamingType = GrpcMethodStreamingType.PT_STREAMING;
         }
       } else {
-        pattern = this.createPattern(
+        // Select handler if any presented for No-Streaming pattern
+        methodHandler = this.getMessageHandler(
           name,
           methodName,
           GrpcMethodStreamingType.NO_STREAMING,
+          methodFunction,
         );
-        // Select handler if any presented for No-Streaming pattern
-        methodHandler = this.messageHandlers.get(pattern);
         streamingType = GrpcMethodStreamingType.NO_STREAMING;
       }
       if (!methodHandler) {
         continue;
       }
-      service[methodName] = await this.createServiceMethod(
+      service[methodName] = this.createServiceMethod(
         methodHandler,
         grpcService.prototype[methodName],
         streamingType,
       );
     }
     return service;
+  }
+
+  public getMessageHandler(
+    serviceName: string,
+    methodName: string,
+    streaming: GrpcMethodStreamingType,
+    grpcMethod: { path?: string },
+  ): MessageHandler {
+    let pattern = this.createPattern(serviceName, methodName, streaming);
+    let methodHandler = this.messageHandlers.get(pattern)!;
+    if (!methodHandler) {
+      const packageServiceName = grpcMethod.path?.split?.('/')[1];
+      pattern = this.createPattern(packageServiceName!, methodName, streaming);
+      methodHandler = this.messageHandlers.get(pattern)!;
+    }
+    return methodHandler;
   }
 
   /**
@@ -188,6 +228,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
    *
    * @param methodHandler
    * @param protoNativeHandler
+   * @param streamType
    */
   public createServiceMethod(
     methodHandler: Function,
@@ -221,7 +262,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
     return async (call: GrpcCall, callback: Function) => {
       const handler = methodHandler(call.request, call.metadata, call);
       this.transformToObservable(await handler).subscribe({
-        next: data => callback(null, data),
+        next: async data => callback(null, await data),
         error: (err: any) => callback(err),
       });
     };
@@ -231,17 +272,127 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
     return async (call: GrpcCall, callback: Function) => {
       const handler = methodHandler(call.request, call.metadata, call);
       const result$ = this.transformToObservable(await handler);
-      await result$
-        .pipe(
-          takeUntil(fromEvent(call as any, CANCEL_EVENT)),
-          catchError(err => {
-            call.emit('error', err);
-            return EMPTY;
-          }),
-        )
-        .forEach(data => call.write(data));
-      call.end();
+      await this.writeObservableToGrpc(result$, call);
     };
+  }
+
+  public unwrap<T>(): T {
+    throw new Error('Method is not supported for gRPC transport');
+  }
+
+  public on<
+    EventKey extends string | number | symbol = string | number | symbol,
+    EventCallback = any,
+  >(event: EventKey, callback: EventCallback) {
+    throw new Error('Method is not supported in gRPC mode.');
+  }
+
+  /**
+   * Writes an observable to a GRPC call.
+   *
+   * This function will ensure that backpressure is managed while writing values
+   * that come from an observable to a GRPC call.
+   *
+   * @param source The observable we want to write out to the GRPC call.
+   * @param call The GRPC call we want to write to.
+   * @returns A promise that resolves when we're done writing to the call.
+   */
+  private writeObservableToGrpc<T>(
+    source: Observable<T>,
+    call: GrpcCall<T>,
+  ): Promise<void> {
+    // This promise should **not** reject, as we're handling errors in the observable for the Call
+    // the promise is only needed to signal when writing/draining has been completed
+    return new Promise((resolve, _doNotUse) => {
+      const valuesWaitingToBeDrained: T[] = [];
+      let shouldErrorAfterDraining = false;
+      let error: any;
+      let shouldResolveAfterDraining = false;
+      let writing = true;
+
+      // Used to manage finalization
+      const subscription = new Subscription();
+
+      // If the call is cancelled, unsubscribe from the source
+      const cancelHandler = () => {
+        subscription.unsubscribe();
+        // Calls that are cancelled by the client should be successfully resolved here
+        resolve();
+      };
+      call.on(CANCELLED_EVENT, cancelHandler);
+      subscription.add(() => call.off(CANCELLED_EVENT, cancelHandler));
+
+      // In all cases, when we finalize, end the writable stream
+      // being careful that errors and writes must be emitted _before_ this call is ended
+      subscription.add(() => call.end());
+
+      const drain = () => {
+        writing = true;
+        while (valuesWaitingToBeDrained.length > 0) {
+          const value = valuesWaitingToBeDrained.shift();
+          if (writing) {
+            // The first time `call.write` returns false, we need to stop.
+            // It wrote the value, but it won't write anything else.
+            writing = call.write(value);
+            if (!writing) {
+              // We can't write anymore so we need to wait for the drain event
+              return;
+            }
+          }
+        }
+
+        if (shouldResolveAfterDraining) {
+          subscription.unsubscribe();
+          resolve();
+        } else if (shouldErrorAfterDraining) {
+          call.emit('error', error);
+          subscription.unsubscribe();
+          resolve();
+        }
+      };
+
+      call.on('drain', drain);
+      subscription.add(() => call.off('drain', drain));
+
+      subscription.add(
+        source.subscribe({
+          next(value) {
+            if (writing) {
+              writing = call.write(value);
+            } else {
+              // If we can't write, that's because we need to
+              // wait for the drain event before we can write again
+              // buffer the value and wait for the drain event
+              valuesWaitingToBeDrained.push(value);
+            }
+          },
+          error(err) {
+            if (valuesWaitingToBeDrained.length === 0) {
+              // We're not waiting for a drain event, so we can just
+              // reject and teardown.
+              call.emit('error', err);
+              subscription.unsubscribe();
+              resolve();
+            } else {
+              // We're waiting for a drain event, record the
+              // error so it can be handled after everything is drained.
+              shouldErrorAfterDraining = true;
+              error = err;
+            }
+          },
+          complete() {
+            if (valuesWaitingToBeDrained.length === 0) {
+              // We're not waiting for a drain event, so we can just
+              // resolve and teardown.
+              subscription.unsubscribe();
+              resolve();
+            } else {
+              shouldResolveAfterDraining = true;
+            }
+          },
+        }),
+      );
+    });
   }
 
   public createRequestStreamMethod(
@@ -252,8 +403,12 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
       call: GrpcCall,
       callback: (err: unknown, value: unknown) => void,
     ) => {
-      const req = new Subject<any>();
-      call.on('data', (m: any) => req.next(m));
+      // Needs to be a Proxy in order to buffer messages that come before handler is executed
+      // This could happen if handler has any async guards or interceptors registered that would delay
+      // the execution.
+      const { subject, next, error, complete, cleanup } =
+        this.bufferUntilDrained();
+      call.on('data', (m: any) => next(m));
       call.on('error', (e: any) => {
         // Check if error means that stream ended on other end
         const isCancelledError = String(e).toLowerCase().indexOf('cancelled');
@@ -263,32 +418,30 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
           return;
         }
         // If another error then just pass it along
-        req.error(e);
+        error(e);
       });
-      call.on('end', () => req.complete());
+      call.on('end', () => {
+        complete();
+        cleanup();
+      });
 
-      const handler = methodHandler(req.asObservable(), call.metadata, call);
+      const handler = methodHandler(
+        subject.asObservable(),
+        call.metadata,
+        call,
+      );
       const res = this.transformToObservable(await handler);
       if (isResponseStream) {
-        await res
-          .pipe(
-            takeUntil(fromEvent(call as any, CANCEL_EVENT)),
-            catchError(err => {
-              call.emit('error', err);
-              return EMPTY;
-            }),
-          )
-          .forEach(m => call.write(m));
-
-        call.end();
+        await this.writeObservableToGrpc(res, call);
       } else {
         const response = await lastValueFrom(
           res.pipe(
-            takeUntil(fromEvent(call as any, CANCEL_EVENT)),
+            takeUntil(fromEvent(call as any, CANCELLED_EVENT)),
             catchError(err => {
               callback(err, null);
               return EMPTY;
             }),
+            defaultIfEmpty(undefined),
           ),
         );
 
@@ -307,16 +460,32 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
       call: GrpcCall,
       callback: (err: unknown, value: unknown) => void,
     ) => {
+      let handlerStream: Observable<any>;
       if (isResponseStream) {
-        methodHandler(call);
+        handlerStream = this.transformToObservable(await methodHandler(call));
       } else {
-        methodHandler(call, callback);
+        handlerStream = this.transformToObservable(
+          await methodHandler(call, callback),
+        );
       }
+      await lastValueFrom(handlerStream);
     };
   }
 
-  public close() {
-    this.grpcClient && this.grpcClient.forceShutdown();
+  public async close(): Promise<void> {
+    if (this.grpcClient) {
+      const graceful = this.getOptionsProp(this.options, 'gracefulShutdown');
+      if (graceful) {
+        await new Promise<void>((resolve, reject) => {
+          this.grpcClient.tryShutdown((error: Error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+      } else {
+        this.grpcClient.forceShutdown();
+      }
+    }
     this.grpcClient = null;
   }
 
@@ -338,7 +507,7 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
     this.messageHandlers.set(route, callback);
   }
 
-  public async createClient(): Promise<any> {
+  public async createClient() {
     const channelOptions: ChannelOptions =
       this.options && this.options.channelOptions
         ? this.options.channelOptions
@@ -380,20 +549,26 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
 
   public loadProto(): any {
     try {
-      const file = this.getOptionsProp(this.options, 'protoPath');
-      const loader = this.getOptionsProp(this.options, 'loader');
+      const packageDefinition = getGrpcPackageDefinition(
+        this.options,
+        grpcProtoLoaderPackage,
+      );
 
-      const packageDefinition = grpcProtoLoaderPackage.loadSync(file, loader);
-      const packageObject =
-        grpcPackage.loadPackageDefinition(packageDefinition);
-      return packageObject;
+      if (this.options.onLoadPackageDefinition) {
+        this.options.onLoadPackageDefinition(
+          packageDefinition,
+          this.grpcClient,
+        );
+      }
+
+      return grpcPackage.loadPackageDefinition(packageDefinition);
     } catch (err) {
-      const invalidProtoError = new InvalidProtoDefinitionException();
+      const invalidProtoError = new InvalidProtoDefinitionException(err.path);
       const message =
         err && err.message ? err.message : invalidProtoError.message;
 
       this.logger.error(message, invalidProtoError.stack);
-      throw err;
+      throw invalidProtoError;
     }
   }
 
@@ -430,14 +605,19 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
         ? deepDefinition.service !== false
         : false;
 
+      // grpc namespace object does not have 'format' or 'service' properties defined
+      const isFormatDefined =
+        deepDefinition && !isUndefined(deepDefinition.format);
+
       if (isServiceDefined && isServiceBoolean) {
         accumulator.push({
           name: nameExtended,
           service: deepDefinition,
         });
-      }
-      // Continue recursion until objects end or service definition found
-      else {
+      } else if (isFormatDefined) {
+        // Do nothing
+      } else {
+        // Continue recursion for namespace object until objects end or service definition found
         this.collectDeepServices(nameExtended, deepDefinition, accumulator);
       }
     }
@@ -452,10 +632,10 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
     return name + '.' + key;
   }
 
-  private async createServices(grpcPkg: any) {
+  private async createServices(grpcPkg: any, packageName: string) {
     if (!grpcPkg) {
-      const invalidPackageError = new InvalidGrpcPackageException();
-      this.logger.error(invalidPackageError.message, invalidPackageError.stack);
+      const invalidPackageError = new InvalidGrpcPackageException(packageName);
+      this.logger.error(invalidPackageError);
       throw invalidPackageError;
     }
 
@@ -469,5 +649,78 @@ export class ServerGrpc extends Server implements CustomTransportStrategy {
         await this.createService(definition.service, definition.name),
       );
     }
+  }
+
+  private bufferUntilDrained<T>() {
+    type DrainableSubject<T> = Subject<T> & { drainBuffer: () => void };
+
+    const subject = new Subject<T>();
+    let replayBuffer: ReplaySubject<T> | null = new ReplaySubject<T>();
+    let hasDrained = false;
+
+    function drainBuffer(this: DrainableSubject<T>) {
+      if (hasDrained || !replayBuffer) {
+        return;
+      }
+      hasDrained = true;
+
+      // Replay buffered values to the new subscriber
+      setImmediate(() => {
+        const subcription = replayBuffer!.subscribe(subject);
+        subcription.unsubscribe();
+        replayBuffer = null;
+      });
+    }
+
+    return {
+      subject: new Proxy<DrainableSubject<T>>(subject as DrainableSubject<T>, {
+        get(target, prop, receiver) {
+          if (prop === 'asObservable') {
+            return () => {
+              const stream = subject.asObservable();
+
+              // "drainBuffer" will be called before the evaluation of the handler
+              // but after any enhancers have been applied (e.g., `interceptors`)
+              Object.defineProperty(stream, drainBuffer.name, {
+                value: drainBuffer,
+              });
+              return stream;
+            };
+          }
+          if (hasDrained) {
+            return Reflect.get(target, prop, receiver);
+          }
+          return Reflect.get(replayBuffer!, prop, receiver);
+        },
+      }),
+      next: (value: T) => {
+        if (!hasDrained) {
+          replayBuffer!.next(value);
+        }
+        subject.next(value);
+      },
+      error: (err: any) => {
+        if (!hasDrained) {
+          replayBuffer!.error(err);
+        }
+        subject.error(err);
+      },
+      complete: () => {
+        if (!hasDrained) {
+          replayBuffer!.complete();
+          // Replay buffer is no longer needed
+          // Return early to allow subject to complete later, after the replay buffer
+          // has been drained
+          return;
+        }
+        subject.complete();
+      },
+      cleanup: () => {
+        if (hasDrained) {
+          return;
+        }
+        replayBuffer = null;
+      },
+    };
   }
 }

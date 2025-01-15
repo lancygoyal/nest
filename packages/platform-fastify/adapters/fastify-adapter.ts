@@ -1,72 +1,107 @@
+/* eslint-disable @typescript-eslint/no-floating-promises */
+import { FastifyCorsOptions } from '@fastify/cors';
 import {
   HttpStatus,
   Logger,
+  RawBodyRequest,
   RequestMethod,
   StreamableFile,
+  VERSION_NEUTRAL,
   VersioningOptions,
   VersioningType,
 } from '@nestjs/common';
-import { VersionValue, VERSION_NEUTRAL } from '@nestjs/common/interfaces';
-import {
-  CorsOptions,
-  CorsOptionsDelegate,
-} from '@nestjs/common/interfaces/external/cors-options.interface';
+import { VersionValue } from '@nestjs/common/interfaces';
 import { loadPackage } from '@nestjs/common/utils/load-package.util';
 import { isString, isUndefined } from '@nestjs/common/utils/shared.utils';
 import { AbstractHttpAdapter } from '@nestjs/core/adapters/http-adapter';
+import { LegacyRouteConverter } from '@nestjs/core/router/legacy-route-converter';
 import {
-  fastify,
+  FastifyBaseLogger,
+  FastifyBodyParser,
   FastifyInstance,
-  FastifyLoggerInstance,
+  FastifyListenOptions,
   FastifyPluginAsync,
   FastifyPluginCallback,
+  FastifyRegister,
   FastifyReply,
   FastifyRequest,
   FastifyServerOptions,
+  HTTPMethods,
   RawReplyDefaultExpression,
   RawRequestDefaultExpression,
   RawServerBase,
   RawServerDefault,
   RequestGenericInterface,
+  RouteGenericInterface,
+  RouteOptions,
+  RouteShorthandOptions,
+  fastify,
 } from 'fastify';
 import * as Reply from 'fastify/lib/reply';
-import { RouteShorthandMethod } from 'fastify/types/route';
+import { kRouteContext } from 'fastify/lib/symbols';
+import * as http from 'http';
 import * as http2 from 'http2';
 import * as https from 'https';
 import {
-  Chain as LightMyRequestChain,
   InjectOptions,
+  Chain as LightMyRequestChain,
   Response as LightMyRequestResponse,
 } from 'light-my-request';
+import { pathToRegexp } from 'path-to-regexp';
+// `querystring` is used internally in fastify for registering urlencoded body parser.
+import { parse as querystringParse } from 'querystring';
+import {
+  FASTIFY_ROUTE_CONFIG_METADATA,
+  FASTIFY_ROUTE_CONSTRAINTS_METADATA,
+} from '../constants';
+import { NestFastifyBodyParserOptions } from '../interfaces';
 import {
   FastifyStaticOptions,
-  PointOfViewOptions,
+  FastifyViewOptions,
 } from '../interfaces/external';
+
+type FastifyAdapterBaseOptions<
+  Server extends RawServerBase = RawServerDefault,
+  Logger extends FastifyBaseLogger = FastifyBaseLogger,
+> = FastifyServerOptions<Server, Logger> & {
+  skipMiddie?: boolean;
+};
 
 type FastifyHttp2SecureOptions<
   Server extends http2.Http2SecureServer,
-  Logger extends FastifyLoggerInstance = FastifyLoggerInstance,
-> = FastifyServerOptions<Server, Logger> & {
+  Logger extends FastifyBaseLogger = FastifyBaseLogger,
+> = FastifyAdapterBaseOptions<Server, Logger> & {
   http2: true;
   https: http2.SecureServerOptions;
 };
 
 type FastifyHttp2Options<
   Server extends http2.Http2Server,
-  Logger extends FastifyLoggerInstance = FastifyLoggerInstance,
-> = FastifyServerOptions<Server, Logger> & {
+  Logger extends FastifyBaseLogger = FastifyBaseLogger,
+> = FastifyAdapterBaseOptions<Server, Logger> & {
   http2: true;
   http2SessionTimeout?: number;
 };
 
 type FastifyHttpsOptions<
   Server extends https.Server,
-  Logger extends FastifyLoggerInstance = FastifyLoggerInstance,
-> = FastifyServerOptions<Server, Logger> & {
+  Logger extends FastifyBaseLogger = FastifyBaseLogger,
+> = FastifyAdapterBaseOptions<Server, Logger> & {
   https: https.ServerOptions;
 };
 
-type VersionedRoute = Function & {
+type FastifyHttpOptions<
+  Server extends http.Server,
+  Logger extends FastifyBaseLogger = FastifyBaseLogger,
+> = FastifyAdapterBaseOptions<Server, Logger> & {
+  http: http.ServerOptions;
+};
+
+type VersionedRoute<TRequest, TResponse> = ((
+  req: TRequest,
+  res: TResponse,
+  next: Function,
+) => Function) & {
   version: VersionValue;
   versioningOptions: VersioningOptions;
 };
@@ -80,31 +115,38 @@ type VersionedRoute = Function & {
 type FastifyRawRequest<TServer extends RawServerBase> =
   RawRequestDefaultExpression<TServer> & { originalUrl?: string };
 
+/**
+ * @publicApi
+ */
 export class FastifyAdapter<
   TServer extends RawServerBase = RawServerDefault,
   TRawRequest extends FastifyRawRequest<TServer> = FastifyRawRequest<TServer>,
-  TRawResponse extends RawReplyDefaultExpression<TServer> = RawReplyDefaultExpression<TServer>,
+  TRawResponse extends
+    RawReplyDefaultExpression<TServer> = RawReplyDefaultExpression<TServer>,
   TRequest extends FastifyRequest<
     RequestGenericInterface,
     TServer,
     TRawRequest
   > = FastifyRequest<RequestGenericInterface, TServer, TRawRequest>,
   TReply extends FastifyReply<
+    RouteGenericInterface,
     TServer,
     TRawRequest,
     TRawResponse
-  > = FastifyReply<TServer, TRawRequest, TRawResponse>,
+  > = FastifyReply<RouteGenericInterface, TServer, TRawRequest, TRawResponse>,
   TInstance extends FastifyInstance<
     TServer,
     TRawRequest,
     TRawResponse
   > = FastifyInstance<TServer, TRawRequest, TRawResponse>,
 > extends AbstractHttpAdapter<TServer, TRequest, TReply> {
+  protected readonly logger = new Logger(FastifyAdapter.name);
   protected readonly instance: TInstance;
+  protected _pathPrefix?: string;
 
   private _isParserRegistered: boolean;
   private isMiddieRegistered: boolean;
-  private versioningOptions: VersioningOptions;
+  private versioningOptions?: VersioningOptions;
   private readonly versionConstraint = {
     name: 'version',
     validate(value: unknown) {
@@ -119,7 +161,7 @@ export class FastifyAdapter<
       return {
         get(version: string | Array<string>) {
           if (Array.isArray(version)) {
-            return versions.get(version.find(v => versions.has(v))) || null;
+            return versions.get(version.find(v => versions.has(v))!) || null;
           }
           return versions.get(version) || null;
         },
@@ -144,7 +186,7 @@ export class FastifyAdapter<
     },
     deriveConstraint: (req: FastifyRequest) => {
       // Media Type (Accept Header) Versioning Handler
-      if (this.versioningOptions.type === VersioningType.MEDIA_TYPE) {
+      if (this.versioningOptions?.type === VersioningType.MEDIA_TYPE) {
         const MEDIA_TYPE_HEADER = 'Accept';
         const acceptHeaderValue: string | undefined = (req.headers?.[
           MEDIA_TYPE_HEADER
@@ -154,25 +196,22 @@ export class FastifyAdapter<
           ? acceptHeaderValue.split(';')[1]
           : '';
 
-        if (acceptHeaderVersionParameter) {
-          const headerVersion = acceptHeaderVersionParameter.split(
-            this.versioningOptions.key,
-          )[1];
-          return headerVersion;
-        }
+        return isUndefined(acceptHeaderVersionParameter)
+          ? VERSION_NEUTRAL // No version was supplied
+          : acceptHeaderVersionParameter.split(this.versioningOptions.key)[1];
       }
       // Header Versioning Handler
-      else if (this.versioningOptions.type === VersioningType.HEADER) {
+      else if (this.versioningOptions?.type === VersioningType.HEADER) {
         const customHeaderVersionParameter: string | string[] | undefined =
           req.headers?.[this.versioningOptions.header] ||
           req.headers?.[this.versioningOptions.header.toLowerCase()];
 
-        if (customHeaderVersionParameter) {
-          return customHeaderVersionParameter;
-        }
+        return isUndefined(customHeaderVersionParameter)
+          ? VERSION_NEUTRAL // No version was supplied
+          : customHeaderVersionParameter;
       }
       // Custom Versioning Handler
-      else if (this.versioningOptions.type === VersioningType.CUSTOM) {
+      else if (this.versioningOptions?.type === VersioningType.CUSTOM) {
         return this.versioningOptions.extractor(req);
       }
       return undefined;
@@ -190,7 +229,8 @@ export class FastifyAdapter<
       | FastifyHttp2Options<any>
       | FastifyHttp2SecureOptions<any>
       | FastifyHttpsOptions<any>
-      | FastifyServerOptions<TServer>,
+      | FastifyHttpOptions<any>
+      | FastifyAdapterBaseOptions<TServer>,
   ) {
     super();
 
@@ -203,7 +243,12 @@ export class FastifyAdapter<
             },
             ...(instanceOrOptions as FastifyServerOptions),
           });
+
     this.setInstance(instance);
+
+    if ((instanceOrOptions as FastifyAdapterBaseOptions)?.skipMiddie) {
+      this.isMiddieRegistered = true;
+    }
   }
 
   public async init() {
@@ -219,47 +264,102 @@ export class FastifyAdapter<
     hostname: string,
     callback?: () => void,
   ): void;
-  public listen(port: string | number, ...args: any[]): Promise<string> {
-    return this.instance.listen(port, ...args);
+  public listen(
+    listenOptions: string | number | FastifyListenOptions,
+    ...args: any[]
+  ): void {
+    const isFirstArgTypeofFunction = typeof args[0] === 'function';
+    const callback = isFirstArgTypeofFunction ? args[0] : args[1];
+
+    let options: Record<string, any>;
+    if (
+      typeof listenOptions === 'object' &&
+      (listenOptions.host !== undefined ||
+        listenOptions.port !== undefined ||
+        listenOptions.path !== undefined)
+    ) {
+      // First parameter is an object with a path, port and/or host attributes
+      options = listenOptions;
+    } else {
+      options = {
+        port: +listenOptions,
+      };
+    }
+    if (!isFirstArgTypeofFunction) {
+      options.host = args[0];
+    }
+    return this.instance.listen(options, callback);
   }
 
   public get(...args: any[]) {
-    return this.injectConstraintsIfVersioned('get', ...args);
+    return this.injectRouteOptions('GET', ...args);
   }
 
   public post(...args: any[]) {
-    return this.injectConstraintsIfVersioned('post', ...args);
+    return this.injectRouteOptions('POST', ...args);
   }
 
   public head(...args: any[]) {
-    return this.injectConstraintsIfVersioned('head', ...args);
+    return this.injectRouteOptions('HEAD', ...args);
   }
 
   public delete(...args: any[]) {
-    return this.injectConstraintsIfVersioned('delete', ...args);
+    return this.injectRouteOptions('DELETE', ...args);
   }
 
   public put(...args: any[]) {
-    return this.injectConstraintsIfVersioned('put', ...args);
+    return this.injectRouteOptions('PUT', ...args);
   }
 
   public patch(...args: any[]) {
-    return this.injectConstraintsIfVersioned('patch', ...args);
+    return this.injectRouteOptions('PATCH', ...args);
   }
 
   public options(...args: any[]) {
-    return this.injectConstraintsIfVersioned('options', ...args);
+    return this.injectRouteOptions('OPTIONS', ...args);
+  }
+
+  public search(...args: any[]) {
+    return this.injectRouteOptions('SEARCH', ...args);
+  }
+
+  public propfind(...args: any[]) {
+    return this.injectRouteOptions('PROPFIND', ...args);
+  }
+
+  public proppatch(...args: any[]) {
+    return this.injectRouteOptions('PROPPATCH', ...args);
+  }
+
+  public mkcol(...args: any[]) {
+    return this.injectRouteOptions('MKCOL', ...args);
+  }
+
+  public copy(...args: any[]) {
+    return this.injectRouteOptions('COPY', ...args);
+  }
+
+  public move(...args: any[]) {
+    return this.injectRouteOptions('MOVE', ...args);
+  }
+
+  public lock(...args: any[]) {
+    return this.injectRouteOptions('LOCK', ...args);
+  }
+
+  public unlock(...args: any[]) {
+    return this.injectRouteOptions('UNLOCK', ...args);
   }
 
   public applyVersionFilter(
     handler: Function,
     version: VersionValue,
     versioningOptions: VersioningOptions,
-  ) {
+  ): VersionedRoute<TRequest, TReply> {
     if (!this.versioningOptions) {
       this.versioningOptions = versioningOptions;
     }
-    const versionedRoute = handler as VersionedRoute;
+    const versionedRoute = handler as VersionedRoute<TRequest, TReply>;
     versionedRoute.version = version;
     return versionedRoute;
   }
@@ -273,7 +373,7 @@ export class FastifyAdapter<
       ? new Reply(
           response,
           {
-            context: {
+            [kRouteContext]: {
               preSerialization: null,
               preValidation: [],
               preHandler: [],
@@ -310,6 +410,17 @@ export class FastifyAdapter<
       }
       body = body.getStream();
     }
+    if (
+      fastifyReply.getHeader('Content-Type') !== undefined &&
+      fastifyReply.getHeader('Content-Type') !== 'application/json' &&
+      body?.statusCode >= HttpStatus.BAD_REQUEST
+    ) {
+      Logger.warn(
+        "Content-Type doesn't match Reply body, you might need a custom ExceptionFilter for non-JSON responses",
+        FastifyAdapter.name,
+      );
+      fastifyReply.header('Content-Type', 'application/json');
+    }
     return fastifyReply.send(body);
   }
 
@@ -318,7 +429,11 @@ export class FastifyAdapter<
       response.statusCode = statusCode;
       return response;
     }
-    return (response as TReply).code(statusCode);
+    return (response as { code: Function }).code(statusCode);
+  }
+
+  public end(response: TReply, message?: string) {
+    response.raw.end(message!);
   }
 
   public render(
@@ -350,11 +465,12 @@ export class FastifyAdapter<
     return this.instance as unknown as T;
   }
 
-  public register<TRegister extends Parameters<TInstance['register']>>(
-    plugin: TRegister['0'],
-    opts?: TRegister['1'],
-  ) {
-    return this.instance.register(plugin, opts);
+  public register<
+    TRegister extends Parameters<
+      FastifyRegister<FastifyInstance<TServer, TRawRequest, TRawResponse>>
+    >,
+  >(plugin: TRegister['0'], opts?: TRegister['1']) {
+    return (this.instance.register as any)(plugin, opts);
   }
 
   public inject(): LightMyRequestChain;
@@ -362,7 +478,7 @@ export class FastifyAdapter<
   public inject(
     opts?: InjectOptions | string,
   ): LightMyRequestChain | Promise<LightMyRequestResponse> {
-    return this.instance.inject(opts);
+    return this.instance.inject(opts!);
   }
 
   public async close() {
@@ -383,14 +499,14 @@ export class FastifyAdapter<
 
   public useStaticAssets(options: FastifyStaticOptions) {
     return this.register(
-      loadPackage('fastify-static', 'FastifyAdapter.useStaticAssets()', () =>
-        require('fastify-static'),
+      loadPackage('@fastify/static', 'FastifyAdapter.useStaticAssets()', () =>
+        require('@fastify/static'),
       ),
       options,
     );
   }
 
-  public setViewEngine(options: PointOfViewOptions | string) {
+  public setViewEngine(options: FastifyViewOptions | string) {
     if (isString(options)) {
       new Logger('FastifyAdapter').error(
         "setViewEngine() doesn't support a string argument.",
@@ -398,15 +514,27 @@ export class FastifyAdapter<
       process.exit(1);
     }
     return this.register(
-      loadPackage('point-of-view', 'FastifyAdapter.setViewEngine()', () =>
-        require('point-of-view'),
+      loadPackage('@fastify/view', 'FastifyAdapter.setViewEngine()', () =>
+        require('@fastify/view'),
       ),
       options,
     );
   }
 
+  public isHeadersSent(response: TReply): boolean {
+    return response.sent;
+  }
+
+  public getHeader?(response: any, name: string) {
+    return response.getHeader(name);
+  }
+
   public setHeader(response: TReply, name: string, value: string) {
     return response.header(name, value);
+  }
+
+  public appendHeader?(response: any, name: string, value: string) {
+    response.header(name, value);
   }
 
   public getRequestHostname(request: TRequest): string {
@@ -414,7 +542,7 @@ export class FastifyAdapter<
   }
 
   public getRequestMethod(request: TRequest): string {
-    return request.raw ? request.raw.method : request.method;
+    return request.raw ? request.raw.method! : request.method;
   }
 
   public getRequestUrl(request: TRequest): string;
@@ -423,15 +551,63 @@ export class FastifyAdapter<
     return this.getRequestOriginalUrl(request.raw || request);
   }
 
-  public enableCors(options: CorsOptions | CorsOptionsDelegate<TRequest>) {
-    this.register(import('fastify-cors'), options);
+  public enableCors(options?: FastifyCorsOptions) {
+    this.register(
+      import('@fastify/cors') as Parameters<TInstance['register']>[0],
+      options,
+    );
   }
 
-  public registerParserMiddleware() {
+  public registerParserMiddleware(prefix?: string, rawBody?: boolean) {
     if (this._isParserRegistered) {
       return;
     }
-    this.register(import('fastify-formbody'));
+
+    this.registerUrlencodedContentParser(rawBody);
+    this.registerJsonContentParser(rawBody);
+
+    this._isParserRegistered = true;
+    this._pathPrefix = prefix
+      ? !prefix.startsWith('/')
+        ? `/${prefix}`
+        : prefix
+      : undefined;
+  }
+
+  public useBodyParser(
+    type: string | string[] | RegExp,
+    rawBody: boolean,
+    options?: NestFastifyBodyParserOptions,
+    parser?: FastifyBodyParser<Buffer, TServer>,
+  ) {
+    const parserOptions = {
+      ...(options || {}),
+      parseAs: 'buffer' as const,
+    };
+
+    this.getInstance().addContentTypeParser<Buffer>(
+      type,
+      parserOptions,
+      (
+        req: RawBodyRequest<FastifyRequest<any, TServer, TRawRequest>>,
+        body: Buffer,
+        done,
+      ) => {
+        if (rawBody === true && Buffer.isBuffer(body)) {
+          req.rawBody = body;
+        }
+
+        if (parser) {
+          parser(req, body, done);
+          return;
+        }
+
+        done(null, body);
+      },
+    );
+
+    // To avoid the Nest application init to override our custom
+    // body parser, we mark the parsers as registered.
     this._isParserRegistered = true;
   }
 
@@ -442,19 +618,49 @@ export class FastifyAdapter<
       await this.registerMiddie();
     }
     return (path: string, callback: Function) => {
-      let normalizedPath = path.endsWith('/*')
-        ? `${path.slice(0, -1)}(.*)`
-        : path;
+      const hasEndOfStringCharacter = path.endsWith('$');
+      path = hasEndOfStringCharacter ? path.slice(0, -1) : path;
 
-      // Fallback to "(.*)" to support plugins like GraphQL
-      normalizedPath = normalizedPath === '/(.*)' ? '(.*)' : normalizedPath;
+      let normalizedPath = LegacyRouteConverter.tryConvert(path);
 
-      // The following type assertion is valid as we use import('middie') rather than require('middie')
-      // ref https://github.com/fastify/middie/pull/55
-      this.instance.use(
-        normalizedPath,
-        callback as Parameters<TInstance['use']>['1'],
-      );
+      // Fallback to "*path" to support plugins like GraphQL
+      normalizedPath = normalizedPath === '/*path' ? '*path' : normalizedPath;
+
+      // Normalize the path to support the prefix if it set in application
+      normalizedPath =
+        this._pathPrefix && !normalizedPath.startsWith(this._pathPrefix)
+          ? `${this._pathPrefix}${normalizedPath}*path`
+          : normalizedPath;
+
+      try {
+        let { regexp: re } = pathToRegexp(normalizedPath);
+        re = hasEndOfStringCharacter
+          ? new RegExp(re.source + '$', re.flags)
+          : re;
+
+        // The following type assertion is valid as we use import('@fastify/middie') rather than require('@fastify/middie')
+        // ref https://github.com/fastify/middie/pull/55
+        this.instance.use(
+          normalizedPath,
+          (req: any, res: any, next: Function) => {
+            const queryParamsIndex = req.originalUrl.indexOf('?');
+            const pathname =
+              queryParamsIndex >= 0
+                ? req.originalUrl.slice(0, queryParamsIndex)
+                : req.originalUrl;
+
+            if (!re.exec(pathname + '/') && normalizedPath) {
+              return next();
+            }
+            return callback(req, res, next);
+          },
+        );
+      } catch (e) {
+        if (e instanceof TypeError) {
+          LegacyRouteConverter.printError(path);
+        }
+        throw e;
+      }
     };
   }
 
@@ -479,47 +685,105 @@ export class FastifyAdapter<
     return !('status' in response);
   }
 
+  private registerJsonContentParser(rawBody?: boolean) {
+    const contentType = 'application/json';
+    const withRawBody = !!rawBody;
+    const { bodyLimit } = this.getInstance().initialConfig;
+
+    this.useBodyParser(
+      contentType,
+      withRawBody,
+      { bodyLimit },
+      (req, body, done) => {
+        const { onProtoPoisoning, onConstructorPoisoning } =
+          this.instance.initialConfig;
+        const defaultJsonParser = this.instance.getDefaultJsonParser(
+          onProtoPoisoning || 'error',
+          onConstructorPoisoning || 'error',
+        ) as FastifyBodyParser<string | Buffer, TServer>;
+        defaultJsonParser(req, body, done);
+      },
+    );
+  }
+
+  private registerUrlencodedContentParser(rawBody?: boolean) {
+    const contentType = 'application/x-www-form-urlencoded';
+    const withRawBody = !!rawBody;
+    const { bodyLimit } = this.getInstance().initialConfig;
+
+    this.useBodyParser(
+      contentType,
+      withRawBody,
+      { bodyLimit },
+      (_req, body, done) => {
+        done(null, querystringParse(body.toString()));
+      },
+    );
+  }
+
   private async registerMiddie() {
     this.isMiddieRegistered = true;
-    await this.register(import('middie'));
+    await this.register(
+      import('@fastify/middie') as Parameters<TInstance['register']>[0],
+    );
   }
 
   private getRequestOriginalUrl(rawRequest: TRawRequest) {
-    return rawRequest.originalUrl || rawRequest.url;
+    return rawRequest.originalUrl || rawRequest.url!;
   }
 
-  private injectConstraintsIfVersioned(
-    routerMethodKey:
-      | 'get'
-      | 'post'
-      | 'put'
-      | 'delete'
-      | 'options'
-      | 'patch'
-      | 'head',
+  private injectRouteOptions(
+    routerMethodKey: Uppercase<HTTPMethods>,
     ...args: any[]
   ) {
     const handlerRef = args[args.length - 1];
     const isVersioned =
       !isUndefined(handlerRef.version) &&
       handlerRef.version !== VERSION_NEUTRAL;
+    const routeConfig = Reflect.getMetadata(
+      FASTIFY_ROUTE_CONFIG_METADATA,
+      handlerRef,
+    );
 
-    if (isVersioned) {
+    const routeConstraints = Reflect.getMetadata(
+      FASTIFY_ROUTE_CONSTRAINTS_METADATA,
+      handlerRef,
+    );
+
+    const hasConfig = !isUndefined(routeConfig);
+    const hasConstraints = !isUndefined(routeConstraints);
+
+    const routeToInject: RouteOptions<TServer, TRawRequest, TRawResponse> &
+      RouteShorthandOptions = {
+      method: routerMethodKey,
+      url: args[0],
+      handler: handlerRef,
+    };
+
+    if (isVersioned || hasConstraints || hasConfig) {
       const isPathAndRouteTuple = args.length === 2;
       if (isPathAndRouteTuple) {
-        const options = {
-          constraints: {
+        const constraints = {
+          ...(hasConstraints && routeConstraints),
+          ...(isVersioned && {
             version: handlerRef.version,
-          },
+          }),
         };
-        const path = args[0];
-        return this.instance[routerMethodKey](path, options, handlerRef);
+
+        const options = {
+          constraints,
+          ...(hasConfig && {
+            config: {
+              ...routeConfig,
+            },
+          }),
+        };
+
+        const routeToInjectWithOptions = { ...routeToInject, ...options };
+
+        return this.instance.route(routeToInjectWithOptions);
       }
     }
-    return this.instance[routerMethodKey](
-      ...(args as Parameters<
-        RouteShorthandMethod<TServer, TRawRequest, TRawResponse>
-      >),
-    );
+    return this.instance.route(routeToInject);
   }
 }

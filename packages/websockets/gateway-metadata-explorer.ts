@@ -11,7 +11,7 @@ import { NestGateway } from './interfaces/nest-gateway.interface';
 export interface MessageMappingProperties {
   message: any;
   methodName: string;
-  callback: (...args: any[]) => Observable<any> | Promise<any> | any;
+  callback: (...args: any[]) => Observable<any> | Promise<any>;
 }
 
 export class GatewayMetadataExplorer {
@@ -19,18 +19,16 @@ export class GatewayMetadataExplorer {
 
   public explore(instance: NestGateway): MessageMappingProperties[] {
     const instancePrototype = Object.getPrototypeOf(instance);
-    return this.metadataScanner.scanFromPrototype<
-      NestGateway,
-      MessageMappingProperties
-    >(instance, instancePrototype, method =>
-      this.exploreMethodMetadata(instancePrototype, method),
-    );
+    return this.metadataScanner
+      .getAllMethodNames(instancePrototype)
+      .map(method => this.exploreMethodMetadata(instancePrototype, method)!)
+      .filter(metadata => metadata);
   }
 
   public exploreMethodMetadata(
     instancePrototype: object,
     methodName: string,
-  ): MessageMappingProperties {
+  ): MessageMappingProperties | null {
     const callback = instancePrototype[methodName];
     const isMessageMapping = Reflect.getMetadata(
       MESSAGE_MAPPING_METADATA,

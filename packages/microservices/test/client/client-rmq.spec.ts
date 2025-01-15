@@ -10,20 +10,22 @@ describe('ClientRMQ', function () {
   this.retries(10);
 
   let client: ClientRMQ;
+  let untypedClient: any;
 
   describe('connect', () => {
     let createClientStub: sinon.SinonStub;
-    let handleErrorsSpy: sinon.SinonSpy;
+    let registerErrorListenerSpy: sinon.SinonSpy;
     let connect$Stub: sinon.SinonStub;
-    let mergeDisconnectEvent: sinon.SinonStub;
 
     beforeEach(async () => {
       client = new ClientRMQ({});
+      untypedClient = client as any;
+
       createClientStub = sinon.stub(client, 'createClient').callsFake(() => ({
         addListener: () => ({}),
         removeListener: () => ({}),
       }));
-      handleErrorsSpy = sinon.spy(client, 'handleError');
+      registerErrorListenerSpy = sinon.spy(client, 'registerErrorListener');
       connect$Stub = sinon.stub(client, 'connect$' as any).callsFake(() => ({
         subscribe: resolve => resolve(),
         toPromise() {
@@ -33,7 +35,7 @@ describe('ClientRMQ', function () {
           return this;
         },
       }));
-      mergeDisconnectEvent = sinon
+      sinon
         .stub(client, 'mergeDisconnectEvent')
         .callsFake((_, source) => source);
     });
@@ -42,10 +44,12 @@ describe('ClientRMQ', function () {
         try {
           client['client'] = null;
           await client.connect();
-        } catch {}
+        } catch {
+          // Ignore
+        }
       });
-      it('should call "handleError" once', async () => {
-        expect(handleErrorsSpy.called).to.be.true;
+      it('should call "registerErrorListener" once', async () => {
+        expect(registerErrorListenerSpy.called).to.be.true;
       });
       it('should call "createClient" once', async () => {
         expect(createClientStub.called).to.be.true;
@@ -62,8 +66,8 @@ describe('ClientRMQ', function () {
       it('should not call "createClient"', () => {
         expect(createClientStub.called).to.be.false;
       });
-      it('should not call "handleError"', () => {
-        expect(handleErrorsSpy.called).to.be.false;
+      it('should not call "registerErrorListener"', () => {
+        expect(registerErrorListenerSpy.called).to.be.false;
       });
       it('should not call "connect$"', () => {
         expect(connect$Stub.called).to.be.false;
@@ -125,20 +129,28 @@ describe('ClientRMQ', function () {
     beforeEach(() => {
       client['queue'] = queue;
       client['queueOptions'] = queueOptions;
-      (client as any)['options'] = { isGlobalPrefetchCount, prefetchCount };
+      untypedClient['options'] = { isGlobalPrefetchCount, prefetchCount };
 
       channel = {
         assertQueue: sinon.spy(() => ({})),
         prefetch: sinon.spy(),
       };
-      consumeStub = sinon.stub(client, 'consumeChannel').callsFake(() => null);
+      consumeStub = sinon.stub(client, 'consumeChannel').callsFake(() => null!);
     });
     afterEach(() => {
       consumeStub.restore();
     });
-    it('should call "assertQueue" with queue and queue options', async () => {
+    it('should call "assertQueue" with queue and queue options when noAssert is false', async () => {
+      client['noAssert'] = false;
+
       await client.setupChannel(channel, () => null);
       expect(channel.assertQueue.calledWith(queue, queueOptions)).to.be.true;
+    });
+    it('should not call "assertQueue" when noAssert is true', async () => {
+      client['noAssert'] = true;
+
+      await client.setupChannel(channel, () => null);
+      expect(channel.assertQueue.called).not.to.be.true;
     });
     it('should call "prefetch" with prefetchCount and "isGlobalPrefetchCount"', async () => {
       await client.setupChannel(channel, () => null);
@@ -164,7 +176,7 @@ describe('ClientRMQ', function () {
         off: () => ({}),
       };
       client
-        .mergeDisconnectEvent(instance as any, EMPTY)
+        .mergeDisconnectEvent(instance, EMPTY)
         .subscribe({ error: (err: any) => expect(err).to.be.eql(error) });
     });
   });
@@ -173,18 +185,20 @@ describe('ClientRMQ', function () {
     const pattern = 'test';
     let msg: ReadPacket;
     let connectSpy: sinon.SinonSpy,
-      sendToQueueSpy: sinon.SinonSpy,
+      sendToQueueStub: sinon.SinonStub,
       eventSpy: sinon.SinonSpy;
 
     beforeEach(() => {
       client = new ClientRMQ({});
+      untypedClient = client as any;
+
       msg = { pattern, data: 'data' };
       connectSpy = sinon.spy(client, 'connect');
       eventSpy = sinon.spy();
-      sendToQueueSpy = sinon.spy();
+      sendToQueueStub = sinon.stub().callsFake(() => ({ catch: sinon.spy() }));
 
       client['channel'] = {
-        sendToQueue: sendToQueueSpy,
+        sendToQueue: sendToQueueStub,
       };
       client['responseEmitter'] = new EventEmitter();
       client['responseEmitter'].on(pattern, eventSpy);
@@ -196,15 +210,15 @@ describe('ClientRMQ', function () {
 
     it('should send message to a proper queue', () => {
       client['publish'](msg, () => {
-        expect(sendToQueueSpy.called).to.be.true;
-        expect(sendToQueueSpy.getCall(0).args[0]).to.be.eql(client['queue']);
+        expect(sendToQueueStub.called).to.be.true;
+        expect(sendToQueueStub.getCall(0).args[0]).to.be.eql(client['queue']);
       });
     });
 
     it('should send buffer from stringified message', () => {
       client['publish'](msg, () => {
-        expect(sendToQueueSpy.called).to.be.true;
-        expect(sendToQueueSpy.getCall(1).args[1]).to.be.eql(
+        expect(sendToQueueStub.called).to.be.true;
+        expect(sendToQueueStub.getCall(1).args[1]).to.be.eql(
           Buffer.from(JSON.stringify(msg)),
         );
       });
@@ -220,7 +234,7 @@ describe('ClientRMQ', function () {
           on: sinon.spy(),
         } as any as EventEmitter;
 
-        subscription = await client['publish'](msg, sinon.spy());
+        subscription = client['publish'](msg, sinon.spy());
         subscription();
       });
       it('should unsubscribe', () => {
@@ -231,7 +245,7 @@ describe('ClientRMQ', function () {
     describe('headers', () => {
       it('should not generate headers if none are configured', () => {
         client['publish'](msg, () => {
-          expect(sendToQueueSpy.getCall(0).args[2].headers).to.be.undefined;
+          expect(sendToQueueStub.getCall(0).args[2].headers).to.be.undefined;
         });
       });
 
@@ -240,7 +254,7 @@ describe('ClientRMQ', function () {
         msg.data = new RmqRecord('data', { headers: requestHeaders });
 
         client['publish'](msg, () => {
-          expect(sendToQueueSpy.getCall(0).args[2].headers).to.eql(
+          expect(sendToQueueStub.getCall(0).args[2].headers).to.eql(
             requestHeaders,
           );
         });
@@ -248,13 +262,13 @@ describe('ClientRMQ', function () {
 
       it('should combine packet and static headers', () => {
         const staticHeaders = { 'client-id': 'some-client-id' };
-        (client as any).options.headers = staticHeaders;
+        untypedClient.options.headers = staticHeaders;
 
         const requestHeaders = { '1': '123' };
         msg.data = new RmqRecord('data', { headers: requestHeaders });
 
         client['publish'](msg, () => {
-          expect(sendToQueueSpy.getCall(0).args[2].headers).to.eql({
+          expect(sendToQueueStub.getCall(0).args[2].headers).to.eql({
             ...staticHeaders,
             ...requestHeaders,
           });
@@ -263,13 +277,13 @@ describe('ClientRMQ', function () {
 
       it('should prefer packet headers over static headers', () => {
         const staticHeaders = { 'client-id': 'some-client-id' };
-        (client as any).options.headers = staticHeaders;
+        untypedClient.options.headers = staticHeaders;
 
         const requestHeaders = { 'client-id': 'override-client-id' };
         msg.data = new RmqRecord('data', { headers: requestHeaders });
 
         client['publish'](msg, () => {
-          expect(sendToQueueSpy.getCall(0).args[2].headers).to.eql(
+          expect(sendToQueueStub.getCall(0).args[2].headers).to.eql(
             requestHeaders,
           );
         });
@@ -350,8 +364,8 @@ describe('ClientRMQ', function () {
     beforeEach(() => {
       channelCloseSpy = sinon.spy();
       clientCloseSpy = sinon.spy();
-      (client as any).channel = { close: channelCloseSpy };
-      (client as any).client = { close: clientCloseSpy };
+      untypedClient.channel = { close: channelCloseSpy };
+      untypedClient.client = { close: clientCloseSpy };
     });
 
     it('should close channel when it is not null', () => {
@@ -370,12 +384,14 @@ describe('ClientRMQ', function () {
 
     beforeEach(() => {
       client = new ClientRMQ({});
+      untypedClient = client as any;
+
       msg = { pattern: 'pattern', data: 'data' };
       sendToQueueStub = sinon.stub();
       channel = {
         sendToQueue: sendToQueueStub,
       };
-      (client as any).channel = channel;
+      untypedClient.channel = channel;
     });
 
     it('should publish packet', async () => {
@@ -412,7 +428,7 @@ describe('ClientRMQ', function () {
       it('should combine packet and static headers', async () => {
         sendToQueueStub.callsFake((a, b, c, d) => d());
         const staticHeaders = { 'client-id': 'some-client-id' };
-        (client as any).options.headers = staticHeaders;
+        untypedClient.options.headers = staticHeaders;
 
         const requestHeaders = { '1': '123' };
         msg.data = new RmqRecord('data', { headers: requestHeaders });
@@ -427,7 +443,7 @@ describe('ClientRMQ', function () {
       it('should prefer packet headers over static headers', async () => {
         sendToQueueStub.callsFake((a, b, c, d) => d());
         const staticHeaders = { 'client-id': 'some-client-id' };
-        (client as any).options.headers = staticHeaders;
+        untypedClient.options.headers = staticHeaders;
 
         const requestHeaders = { 'client-id': 'override-client-id' };
         msg.data = new RmqRecord('data', { headers: requestHeaders });

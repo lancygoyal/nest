@@ -4,9 +4,12 @@ import {
   MODULE_PATH,
   VERSION_METADATA,
 } from '@nestjs/common/constants';
-import { HttpServer, Type } from '@nestjs/common/interfaces';
-import { Controller } from '@nestjs/common/interfaces/controllers/controller.interface';
-import { VersionValue } from '@nestjs/common/interfaces/version-options.interface';
+import {
+  Controller,
+  HttpServer,
+  Type,
+  VersionValue,
+} from '@nestjs/common/interfaces';
 import { Logger } from '@nestjs/common/services/logger.service';
 import { ApplicationConfig } from '../application-config';
 import {
@@ -16,6 +19,7 @@ import {
 import { NestContainer } from '../injector/container';
 import { Injector } from '../injector/injector';
 import { InstanceWrapper } from '../injector/instance-wrapper';
+import { GraphInspector } from '../inspector/graph-inspector';
 import { MetadataScanner } from '../metadata-scanner';
 import { Resolver } from './interfaces/resolver.interface';
 import { RoutePathMetadata } from './interfaces/route-path-metadata.interface';
@@ -37,6 +41,7 @@ export class RoutesResolver implements Resolver {
     private readonly container: NestContainer,
     private readonly applicationConfig: ApplicationConfig,
     private readonly injector: Injector,
+    graphInspector: GraphInspector,
   ) {
     const httpAdapterRef = container.getHttpAdapterRef();
     this.routerExceptionsFilter = new RouterExceptionFilters(
@@ -55,6 +60,7 @@ export class RoutesResolver implements Resolver {
       this.routerExceptionsFilter,
       this.applicationConfig,
       this.routePathFactory,
+      graphInspector,
     );
   }
 
@@ -64,7 +70,7 @@ export class RoutesResolver implements Resolver {
   ) {
     const modules = this.container.getModules();
     modules.forEach(({ controllers, metatype }, moduleName) => {
-      const modulePath = this.getModulePathMetadata(metatype);
+      const modulePath = this.getModulePathMetadata(metatype)!;
       this.registerRouters(
         controllers,
         moduleName,
@@ -85,12 +91,12 @@ export class RoutesResolver implements Resolver {
     routes.forEach(instanceWrapper => {
       const { metatype } = instanceWrapper;
 
-      const host = this.getHostMetadata(metatype);
+      const host = this.getHostMetadata(metatype!);
       const routerPaths = this.routerExplorer.extractRouterPath(
         metatype as Type<any>,
       );
-      const controllerVersion = this.getVersionMetadata(metatype);
-      const controllerName = metatype.name;
+      const controllerVersion = this.getVersionMetadata(metatype!);
+      const controllerName = metatype!.name;
 
       routerPaths.forEach(path => {
         const pathsToLog = this.routePathFactory.create({
@@ -126,7 +132,7 @@ export class RoutesResolver implements Resolver {
           instanceWrapper,
           moduleName,
           applicationRef,
-          host,
+          host!,
           routePathMetadata,
         );
       });

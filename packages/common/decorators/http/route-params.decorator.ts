@@ -36,7 +36,7 @@ export function assignMetadata<TParamtype = any, TArgs = any>(
 ) {
   return {
     ...args,
-    [`${paramtype}:${index}`]: {
+    [`${paramtype as string}:${index}`]: {
       index,
       data,
       pipes,
@@ -48,7 +48,8 @@ function createRouteParamDecorator(paramtype: RouteParamtypes) {
   return (data?: ParamData): ParameterDecorator =>
     (target, key, index) => {
       const args =
-        Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key) || {};
+        Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key!) ||
+        {};
       Reflect.defineMetadata(
         ROUTE_ARGS_METADATA,
         assignMetadata<RouteParamtypes, Record<number, RouteParamMetadata>>(
@@ -58,7 +59,7 @@ function createRouteParamDecorator(paramtype: RouteParamtypes) {
           data,
         ),
         target.constructor,
-        key,
+        key!,
       );
     };
 }
@@ -71,16 +72,16 @@ const createPipesRouteParamDecorator =
   ): ParameterDecorator =>
   (target, key, index) => {
     const args =
-      Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key) || {};
+      Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key!) || {};
     const hasParamData = isNil(data) || isString(data);
     const paramData = hasParamData ? data : undefined;
     const paramPipes = hasParamData ? pipes : [data, ...pipes];
 
     Reflect.defineMetadata(
       ROUTE_ARGS_METADATA,
-      assignMetadata(args, paramtype, index, paramData, ...paramPipes),
+      assignMetadata(args, paramtype, index, paramData!, ...paramPipes),
       target.constructor,
-      key,
+      key!,
     );
   };
 
@@ -117,7 +118,7 @@ export const Response: (
         RESPONSE_PASSTHROUGH_METADATA,
         options?.passthrough,
         target.constructor,
-        key,
+        key!,
       );
     }
     return createRouteParamDecorator(RouteParamtypes.RESPONSE)()(
@@ -504,6 +505,79 @@ export function Body(
 ): ParameterDecorator {
   return createPipesRouteParamDecorator(RouteParamtypes.BODY)(
     property,
+    ...pipes,
+  );
+}
+
+/**
+ * Route handler parameter decorator. Extracts the `rawBody` Buffer
+ * property from the `req` object and populates the decorated parameter with that value.
+ *
+ * For example:
+ * ```typescript
+ * async create(@RawBody() rawBody: Buffer | undefined)
+ * ```
+ *
+ * @see [Request object](https://docs.nestjs.com/controllers#request-object)
+ * @see [Raw body](https://docs.nestjs.com/faq/raw-body)
+ *
+ * @publicApi
+ */
+export function RawBody(): ParameterDecorator;
+
+/**
+ * Route handler parameter decorator. Extracts the `rawBody` Buffer
+ * property from the `req` object and populates the decorated parameter with that value.
+ * Also applies pipes to the bound rawBody parameter.
+ *
+ * For example:
+ * ```typescript
+ * async create(@RawBody(new ValidationPipe()) rawBody: Buffer)
+ * ```
+ *
+ * @param pipes one or more pipes - either instances or classes - to apply to
+ * the bound body parameter.
+ *
+ * @see [Request object](https://docs.nestjs.com/controllers#request-object)
+ * @see [Raw body](https://docs.nestjs.com/faq/raw-body)
+ * @see [Working with pipes](https://docs.nestjs.com/custom-decorators#working-with-pipes)
+ *
+ * @publicApi
+ */
+export function RawBody(
+  ...pipes: (
+    | Type<PipeTransform<Buffer | undefined>>
+    | PipeTransform<Buffer | undefined>
+  )[]
+): ParameterDecorator;
+
+/**
+ * Route handler parameter decorator. Extracts the `rawBody` Buffer
+ * property from the `req` object and populates the decorated parameter with that value.
+ * Also applies pipes to the bound rawBody parameter.
+ *
+ * For example:
+ * ```typescript
+ * async create(@RawBody(new ValidationPipe()) rawBody: Buffer)
+ * ```
+ *
+ * @param pipes one or more pipes - either instances or classes - to apply to
+ * the bound body parameter.
+ *
+ * @see [Request object](https://docs.nestjs.com/controllers#request-object)
+ * @see [Raw body](https://docs.nestjs.com/faq/raw-body)
+ * @see [Working with pipes](https://docs.nestjs.com/custom-decorators#working-with-pipes)
+ *
+ * @publicApi
+ */
+export function RawBody(
+  ...pipes: (
+    | Type<PipeTransform<Buffer | undefined>>
+    | PipeTransform<Buffer | undefined>
+  )[]
+): ParameterDecorator {
+  return createPipesRouteParamDecorator(RouteParamtypes.RAW_BODY)(
+    undefined,
     ...pipes,
   );
 }

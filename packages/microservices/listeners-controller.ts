@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common/interfaces';
 import { Controller } from '@nestjs/common/interfaces/controllers/controller.interface';
 import { isUndefined } from '@nestjs/common/utils/shared.utils';
 import { ContextIdFactory } from '@nestjs/core/helpers/context-id-factory';
@@ -11,9 +10,18 @@ import {
   InstanceWrapper,
 } from '@nestjs/core/injector/instance-wrapper';
 import { Module } from '@nestjs/core/injector/module';
+import { GraphInspector } from '@nestjs/core/inspector/graph-inspector';
 import { MetadataScanner } from '@nestjs/core/metadata-scanner';
 import { REQUEST_CONTEXT_ID } from '@nestjs/core/router/request/request-constants';
-import { connectable, Observable, Subject } from 'rxjs';
+import {
+  forkJoin,
+  from as fromPromise,
+  isObservable,
+  mergeMap,
+  Observable,
+  ObservedValueOf,
+  of,
+} from 'rxjs';
 import { IClientProxyFactory } from './client/client-proxy-factory';
 import { ClientsContainer } from './container';
 import { ExceptionFiltersContext } from './context/exception-filters-context';
@@ -24,13 +32,13 @@ import {
   DEFAULT_GRPC_CALLBACK_METADATA,
 } from './context/rpc-metadata-constants';
 import { BaseRpcContext } from './ctx-host/base-rpc.context';
+import { Transport } from './enums';
+import { MessageHandler, PatternMetadata, RequestContext } from './interfaces';
+import { MicroserviceEntrypointMetadata } from './interfaces/microservice-entrypoint-metadata.interface';
 import {
-  CustomTransportStrategy,
-  MessageHandler,
-  PatternMetadata,
-  RequestContext,
-} from './interfaces';
-import { ListenerMetadataExplorer } from './listener-metadata-explorer';
+  EventOrMessageListenerDefinition,
+  ListenerMetadataExplorer,
+} from './listener-metadata-explorer';
 import { ServerGrpc } from './server';
 import { Server } from './server/server';
 
@@ -47,20 +55,21 @@ export class ListenersController {
     private readonly injector: Injector,
     private readonly clientFactory: IClientProxyFactory,
     private readonly exceptionFiltersContext: ExceptionFiltersContext,
+    private readonly graphInspector: GraphInspector,
   ) {}
 
   public registerPatternHandlers(
-    instanceWrapper: InstanceWrapper<Controller | Injectable>,
-    server: Server & CustomTransportStrategy,
+    instanceWrapper: InstanceWrapper<Controller>,
+    serverInstance: Server,
     moduleKey: string,
   ) {
     const { instance } = instanceWrapper;
 
     const isStatic = instanceWrapper.isDependencyTreeStatic();
-    const patternHandlers = this.metadataExplorer.explore(instance as object);
+    const patternHandlers = this.metadataExplorer.explore(instance);
     const moduleRef = this.container.getModuleByKey(moduleKey);
     const defaultCallMetadata =
-      server instanceof ServerGrpc
+      serverInstance instanceof ServerGrpc
         ? DEFAULT_GRPC_CALLBACK_METADATA
         : DEFAULT_CALLBACK_METADATA;
 
@@ -68,78 +77,148 @@ export class ListenersController {
       .filter(
         ({ transport }) =>
           isUndefined(transport) ||
-          isUndefined(server.transportId) ||
-          transport === server.transportId,
+          isUndefined(serverInstance.transportId) ||
+          transport === serverInstance.transportId,
       )
-      .forEach(
-        ({ pattern, targetCallback, methodKey, extras, isEventHandler }) => {
-          if (isStatic) {
-            const proxy = this.contextCreator.create(
-              instance as object,
-              targetCallback,
-              moduleKey,
-              methodKey,
-              STATIC_CONTEXT,
-              undefined,
-              defaultCallMetadata,
-            );
-            if (isEventHandler) {
-              const eventHandler: MessageHandler = (...args: unknown[]) => {
-                const originalArgs = args;
-                const [dataOrContextHost] = originalArgs;
-                if (dataOrContextHost instanceof RequestContextHost) {
-                  args = args.slice(1, args.length);
-                }
-                const originalReturnValue = proxy(...args);
-                const returnedValueWrapper = eventHandler.next?.(
-                  ...(originalArgs as Parameters<MessageHandler>),
-                );
-                returnedValueWrapper?.then(returnedValue =>
-                  this.connectIfStream(returnedValue as Observable<unknown>),
-                );
-                return originalReturnValue;
-              };
-              return server.addHandler(
-                pattern,
-                eventHandler,
-                isEventHandler,
-                extras,
-              );
-            } else {
-              return server.addHandler(pattern, proxy, isEventHandler, extras);
-            }
-          }
-          const asyncHandler = this.createRequestScopedHandler(
-            instanceWrapper,
-            pattern,
-            moduleRef,
+      .reduce((acc, handler) => {
+        handler.patterns.forEach(pattern =>
+          acc.push({ ...handler, patterns: [pattern] }),
+        );
+        return acc;
+      }, [] as EventOrMessageListenerDefinition[])
+      .forEach((definition: EventOrMessageListenerDefinition) => {
+        const {
+          patterns: [pattern],
+          targetCallback,
+          methodKey,
+          extras,
+          isEventHandler,
+        } = definition;
+
+        this.insertEntrypointDefinition(
+          instanceWrapper,
+          definition,
+          serverInstance.transportId!,
+        );
+
+        if (isStatic) {
+          const proxy = this.contextCreator.create(
+            instance,
+            targetCallback,
             moduleKey,
             methodKey,
+            STATIC_CONTEXT,
+            undefined,
             defaultCallMetadata,
           );
-          server.addHandler(pattern, asyncHandler, isEventHandler, extras);
-        },
-      );
+          if (isEventHandler) {
+            const eventHandler: MessageHandler = async (...args: unknown[]) => {
+              const originalArgs = args;
+              const [dataOrContextHost] = originalArgs;
+              if (dataOrContextHost instanceof RequestContextHost) {
+                args = args.slice(1, args.length);
+              }
+              const returnValue = proxy(...args);
+              return this.forkJoinHandlersIfAttached(
+                returnValue,
+                originalArgs,
+                eventHandler,
+              );
+            };
+            return serverInstance.addHandler(
+              pattern,
+              eventHandler,
+              isEventHandler,
+              extras,
+            );
+          } else {
+            return serverInstance.addHandler(
+              pattern,
+              proxy,
+              isEventHandler,
+              extras,
+            );
+          }
+        }
+        const asyncHandler = this.createRequestScopedHandler(
+          instanceWrapper,
+          pattern,
+          moduleRef!,
+          moduleKey,
+          methodKey,
+          defaultCallMetadata,
+          isEventHandler,
+        );
+        serverInstance.addHandler(
+          pattern,
+          asyncHandler,
+          isEventHandler,
+          extras,
+        );
+      });
   }
 
-  public assignClientsToProperties(instance: Controller | Injectable) {
+  public insertEntrypointDefinition(
+    instanceWrapper: InstanceWrapper,
+    definition: EventOrMessageListenerDefinition,
+    transportId: Transport | symbol,
+  ) {
+    this.graphInspector.insertEntrypointDefinition<MicroserviceEntrypointMetadata>(
+      {
+        type: 'microservice',
+        methodName: definition.methodKey,
+        className: instanceWrapper.metatype?.name as string,
+        classNodeId: instanceWrapper.id,
+        metadata: {
+          key: definition.patterns.toString(),
+          transportId:
+            typeof transportId === 'number'
+              ? (Transport[transportId] as keyof typeof Transport)
+              : transportId,
+          patterns: definition.patterns,
+          isEventHandler: definition.isEventHandler,
+          extras: definition.extras,
+        },
+      },
+      instanceWrapper.id,
+    );
+  }
+
+  public forkJoinHandlersIfAttached(
+    currentReturnValue: Promise<unknown> | Observable<unknown>,
+    originalArgs: unknown[],
+    handlerRef: MessageHandler,
+  ) {
+    if (handlerRef.next) {
+      const returnedValueWrapper = handlerRef.next(
+        ...(originalArgs as Parameters<MessageHandler>),
+      );
+      return forkJoin({
+        current: this.transformToObservable(currentReturnValue),
+        next: this.transformToObservable(returnedValueWrapper),
+      });
+    }
+    return currentReturnValue;
+  }
+
+  public assignClientsToProperties(instance: Controller) {
     for (const {
       property,
       metadata,
-    } of this.metadataExplorer.scanForClientHooks(instance as object)) {
+    } of this.metadataExplorer.scanForClientHooks(instance)) {
       const client = this.clientFactory.create(metadata);
       this.clientsContainer.addClient(client);
 
-      this.assignClientToInstance(instance as object, property, client);
+      this.assignClientToInstance(instance, property, client);
     }
   }
 
   public assignClientToInstance<T = any>(
-    instance: Controller | Injectable,
+    instance: Controller,
     property: string,
     client: T,
   ) {
-    Reflect.set(instance as object, property, client);
+    Reflect.set(instance, property, client);
   }
 
   public createRequestScopedHandler(
@@ -149,9 +228,12 @@ export class ListenersController {
     moduleKey: string,
     methodKey: string,
     defaultCallMetadata: Record<string, any> = DEFAULT_CALLBACK_METADATA,
+    isEventHandler = false,
   ) {
     const collection = moduleRef.controllers;
     const { instance } = wrapper;
+
+    const isTreeDurable = wrapper.isDependencyTreeDurable();
 
     const requestScopedHandler: MessageHandler = async (...args: unknown[]) => {
       try {
@@ -159,7 +241,7 @@ export class ListenersController {
 
         let [dataOrContextHost] = args;
         if (dataOrContextHost instanceof RequestContextHost) {
-          contextId = this.getContextId(dataOrContextHost);
+          contextId = this.getContextId(dataOrContextHost, isTreeDurable);
           args.shift();
         } else {
           const [data, reqCtx] = args;
@@ -168,10 +250,10 @@ export class ListenersController {
             data,
             reqCtx as BaseRpcContext,
           );
-          contextId = this.getContextId(request);
-          this.container.registerRequestProvider(request, contextId);
+          contextId = this.getContextId(request, isTreeDurable);
           dataOrContextHost = request;
         }
+
         const contextInstance = await this.injector.loadPerContext(
           instance,
           moduleRef,
@@ -187,8 +269,16 @@ export class ListenersController {
           wrapper.id,
           defaultCallMetadata,
         );
-        requestScopedHandler.next?.(dataOrContextHost, ...args);
-        return proxy(...args);
+
+        const returnValue = proxy(...args);
+        if (isEventHandler) {
+          return this.forkJoinHandlersIfAttached(
+            returnValue,
+            [dataOrContextHost, ...args],
+            requestScopedHandler,
+          );
+        }
+        return returnValue;
       } catch (err) {
         let exceptionFilter = this.exceptionFiltersCache.get(
           instance[methodKey],
@@ -209,7 +299,10 @@ export class ListenersController {
     return requestScopedHandler;
   }
 
-  private getContextId<T extends RequestContext = any>(request: T): ContextId {
+  private getContextId<T extends RequestContext = any>(
+    request: T,
+    isTreeDurable: boolean,
+  ): ContextId {
     const contextId = ContextIdFactory.getByRequest(request);
     if (!request[REQUEST_CONTEXT_ID as any]) {
       Object.defineProperty(request, REQUEST_CONTEXT_ID, {
@@ -218,19 +311,34 @@ export class ListenersController {
         writable: false,
         configurable: false,
       });
-      this.container.registerRequestProvider(request, contextId);
+
+      const requestProviderValue = isTreeDurable
+        ? contextId.payload
+        : Object.assign(request, contextId.payload);
+      this.container.registerRequestProvider(requestProviderValue, contextId);
     }
     return contextId;
   }
 
-  private connectIfStream(source: Observable<unknown>) {
-    if (!source) {
-      return;
+  public transformToObservable<T>(
+    resultOrDeferred: Observable<T> | Promise<T>,
+  ): Observable<T>;
+  public transformToObservable<T>(
+    resultOrDeferred: T,
+  ): never extends Observable<ObservedValueOf<T>>
+    ? Observable<T>
+    : Observable<ObservedValueOf<T>>;
+  public transformToObservable(resultOrDeferred: any) {
+    if (resultOrDeferred instanceof Promise) {
+      return fromPromise(resultOrDeferred).pipe(
+        mergeMap(val => (isObservable(val) ? val : of(val))),
+      );
     }
-    const connectableSource = connectable(source, {
-      connector: () => new Subject(),
-      resetOnDisconnect: false,
-    });
-    connectableSource.connect();
+
+    if (isObservable(resultOrDeferred)) {
+      return resultOrDeferred;
+    }
+
+    return of(resultOrDeferred);
   }
 }

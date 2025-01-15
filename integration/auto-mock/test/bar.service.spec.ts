@@ -4,6 +4,7 @@ import * as chaiAsPromised from 'chai-as-promised';
 import * as sinon from 'sinon';
 import { BarService } from '../src/bar.service';
 import { FooService } from '../src/foo.service';
+
 chai.use(chaiAsPromised);
 const { expect } = chai;
 
@@ -36,7 +37,7 @@ describe('Auto-Mocking with token in factory', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [BarService],
     })
-      .useMocker((token) => {
+      .useMocker(token => {
         if (token === FooService) {
           return { foo: sinon.stub };
         }
@@ -48,16 +49,13 @@ describe('Auto-Mocking with token in factory', () => {
     expect(fooServ.foo.called);
   });
   it('cannot mock the dependencies', async () => {
-
     const moduleRef = Test.createTestingModule({
       providers: [BarService],
-    })
-      .useMocker((token) => {
-        if (token === FooService.name + 'something that fails the token') {
-          return { foo: sinon.stub };
-        }
-      })
-      .compile;
-    expect(moduleRef()).to.eventually.throw()
+    }).useMocker(token => {
+      if (token === FooService.name + 'something that fails the token') {
+        return { foo: sinon.stub };
+      }
+    }).compile;
+    expect(moduleRef()).to.eventually.throw();
   });
 });

@@ -1,19 +1,44 @@
 import { RequestMethod } from '@nestjs/common';
 import { HttpServer, RouteInfo, Type } from '@nestjs/common/interfaces';
-import { isFunction } from '@nestjs/common/utils/shared.utils';
+import {
+  addLeadingSlash,
+  isFunction,
+  isString,
+} from '@nestjs/common/utils/shared.utils';
 import { iterate } from 'iterare';
-import * as pathToRegexp from 'path-to-regexp';
-import { v4 as uuid } from 'uuid';
+import { pathToRegexp } from 'path-to-regexp';
+import { uid } from 'uid';
 import { ExcludeRouteMetadata } from '../router/interfaces/exclude-route-metadata.interface';
+import { LegacyRouteConverter } from '../router/legacy-route-converter';
 import { isRouteExcluded } from '../router/utils';
 
 export const mapToExcludeRoute = (
-  routes: RouteInfo[],
+  routes: (string | RouteInfo)[],
 ): ExcludeRouteMetadata[] => {
-  return routes.map(({ path, method }) => ({
-    pathRegex: pathToRegexp(path),
-    requestMethod: method,
-  }));
+  return routes.map(route => {
+    const originalPath = isString(route) ? route : route.path;
+    const path = LegacyRouteConverter.tryConvert(originalPath);
+
+    try {
+      if (isString(route)) {
+        return {
+          path,
+          requestMethod: RequestMethod.ALL,
+          pathRegex: pathToRegexp(addLeadingSlash(path)).regexp,
+        };
+      }
+      return {
+        path,
+        requestMethod: route.method,
+        pathRegex: pathToRegexp(addLeadingSlash(path)).regexp,
+      };
+    } catch (e) {
+      if (e instanceof TypeError) {
+        LegacyRouteConverter.printError(originalPath);
+      }
+      throw e;
+    }
+  });
 };
 
 export const filterMiddleware = <T extends Function | Type<any> = any>(
@@ -38,7 +63,7 @@ export const mapToClass = <T extends Function | Type<any>>(
     if (excludedRoutes.length <= 0) {
       return middleware;
     }
-    const MiddlewareHost = class extends (middleware as Type<any>) {
+    const MiddlewareHost = class extends middleware {
       use(...params: unknown[]) {
         const [req, _, next] = params as [Record<string, any>, any, Function];
         const isExcluded = isMiddlewareRouteExcluded(
@@ -85,7 +110,7 @@ export function isMiddlewareClass(middleware: any): middleware is Type<any> {
   );
 }
 
-export function assignToken(metatype: Type<any>, token = uuid()): Type<any> {
+export function assignToken(metatype: Type<any>, token = uid(21)): Type<any> {
   Object.defineProperty(metatype, 'name', { value: token });
   return metatype;
 }
@@ -98,9 +123,9 @@ export function isMiddlewareRouteExcluded(
   if (excludedRoutes.length <= 0) {
     return false;
   }
-  const reqMethod = httpAdapter.getRequestMethod(req);
-  const originalUrl = httpAdapter.getRequestUrl(req);
-  const queryParamsIndex = originalUrl && originalUrl.indexOf('?');
+  const reqMethod = httpAdapter.getRequestMethod!(req);
+  const originalUrl = httpAdapter.getRequestUrl!(req);
+  const queryParamsIndex = originalUrl ? originalUrl.indexOf('?') : -1;
   const pathname =
     queryParamsIndex >= 0
       ? originalUrl.slice(0, queryParamsIndex)

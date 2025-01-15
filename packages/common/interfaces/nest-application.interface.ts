@@ -1,7 +1,3 @@
-import {
-  CorsOptions,
-  CorsOptionsDelegate,
-} from './external/cors-options.interface';
 import { CanActivate } from './features/can-activate.interface';
 import { NestInterceptor } from './features/nest-interceptor.interface';
 import { GlobalPrefixOptions } from './global-prefix-options.interface';
@@ -21,7 +17,8 @@ import { WebSocketAdapter } from './websockets/web-socket-adapter.interface';
  *
  * @publicApi
  */
-export interface INestApplication extends INestApplicationContext {
+export interface INestApplication<TServer = any>
+  extends INestApplicationContext {
   /**
    * A wrapper function around HTTP adapter method: `adapter.use()`.
    * Example `app.use(cors())`
@@ -35,7 +32,7 @@ export interface INestApplication extends INestApplicationContext {
    *
    * @returns {void}
    */
-  enableCors(options?: CorsOptions | CorsOptionsDelegate<any>): void;
+  enableCors(options?: any): void;
 
   /**
    * Enables Versioning for the application.
@@ -60,16 +57,6 @@ export interface INestApplication extends INestApplicationContext {
     hostname: string,
     callback?: () => void,
   ): Promise<any>;
-
-  /**
-   * Starts the application (can be awaited).
-   * @deprecated use "listen" instead.
-   *
-   * @param {number|string} port
-   * @param {string} [hostname]
-   * @returns {Promise}
-   */
-  listenAsync(port: number | string, hostname?: string): Promise<any>;
 
   /**
    * Returns the url the application is listening at, based on OS and IP version. Returns as an IP value either in IPv6 or IPv4
@@ -120,9 +107,9 @@ export interface INestApplication extends INestApplicationContext {
   /**
    * Returns the underlying native HTTP server.
    *
-   * @returns {*}
+   * @returns {TServer}
    */
-  getHttpServer(): any;
+  getHttpServer(): TServer;
 
   /**
    * Returns the underlying HTTP adapter.
@@ -137,14 +124,6 @@ export interface INestApplication extends INestApplicationContext {
    * @returns {Promise}
    */
   startAllMicroservices(): Promise<this>;
-
-  /**
-   * Starts all connected microservices and can be awaited.
-   * @deprecated use "startAllMicroservices" instead.
-   *
-   * @returns {Promise}
-   */
-  startAllMicroservicesAsync(): Promise<this>;
 
   /**
    * Registers exception filters as global filters (will be used within

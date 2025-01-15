@@ -5,10 +5,10 @@ import {
   RequestMethod,
   MessageEvent,
 } from '@nestjs/common';
-import { isFunction, isObject } from '@nestjs/common/utils/shared.utils';
+import { isObject } from '@nestjs/common/utils/shared.utils';
 import { IncomingMessage } from 'http';
-import { EMPTY, lastValueFrom, Observable } from 'rxjs';
-import { catchError, debounce, map } from 'rxjs/operators';
+import { EMPTY, lastValueFrom, Observable, isObservable } from 'rxjs';
+import { catchError, concatMap, map } from 'rxjs/operators';
 import {
   AdditionalHeaders,
   WritableHeaderStream,
@@ -17,7 +17,7 @@ import {
 
 export interface CustomHeader {
   name: string;
-  value: string;
+  value: string | (() => string);
 }
 
 export interface RedirectResponse {
@@ -48,8 +48,8 @@ export class RouterResponseController {
       result && result.statusCode
         ? result.statusCode
         : redirectResponse.statusCode
-        ? redirectResponse.statusCode
-        : HttpStatus.FOUND;
+          ? redirectResponse.statusCode
+          : HttpStatus.FOUND;
     const url = result && result.url ? result.url : redirectResponse.url;
     this.applicationRef.redirect(response, statusCode, url);
   }
@@ -64,7 +64,7 @@ export class RouterResponseController {
   }
 
   public async transformToResult(resultOrDeferred: any) {
-    if (resultOrDeferred && isFunction(resultOrDeferred.subscribe)) {
+    if (isObservable(resultOrDeferred)) {
       return lastValueFrom(resultOrDeferred);
     }
     return resultOrDeferred;
@@ -84,7 +84,11 @@ export class RouterResponseController {
     headers: CustomHeader[],
   ) {
     headers.forEach(({ name, value }) =>
-      this.applicationRef.setHeader(response, name, value),
+      this.applicationRef.setHeader(
+        response,
+        name,
+        typeof value === 'function' ? value() : value,
+      ),
     );
   }
 
@@ -124,7 +128,7 @@ export class RouterResponseController {
 
           return { data: message as object | string };
         }),
-        debounce(
+        concatMap(
           message =>
             new Promise<void>(resolve =>
               stream.writeMessage(message, () => resolve()),
@@ -149,11 +153,14 @@ export class RouterResponseController {
 
     request.on('close', () => {
       subscription.unsubscribe();
+      if (!stream.writableEnded) {
+        stream.end();
+      }
     });
   }
 
-  private assertObservable(result: any) {
-    if (!isFunction(result.subscribe)) {
+  private assertObservable(value: any) {
+    if (!isObservable(value)) {
       throw new ReferenceError(
         'You must return an Observable stream to use Server-Sent Events (SSE).',
       );

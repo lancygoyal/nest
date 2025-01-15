@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { CUSTOM_ROUTE_AGRS_METADATA } from '@nestjs/common/constants';
+import { CUSTOM_ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { expect } from 'chai';
 import { of } from 'rxjs';
@@ -55,7 +55,7 @@ describe('ExternalContextCreator', () => {
         contextCreator,
         'getContextModuleKey',
       );
-      contextCreator.create({ foo: 'bar' }, callback as any, '', '', null);
+      contextCreator.create({ foo: 'bar' }, callback, '', '', null!);
       expect(getContextModuleKeySpy.called).to.be.true;
       done();
     });
@@ -65,13 +65,7 @@ describe('ExternalContextCreator', () => {
 
       beforeEach(() => {
         instance = { foo: 'bar' };
-        proxyContext = contextCreator.create(
-          instance,
-          callback as any,
-          '',
-          '',
-          null,
-        );
+        proxyContext = contextCreator.create(instance, callback, '', '', null!);
       });
       it('should be a function', () => {
         expect(proxyContext).to.be.a('function');
@@ -138,7 +132,7 @@ describe('ExternalContextCreator', () => {
       const metadata = {
         [RouteParamtypes.REQUEST]: { index: 0, data: 'test', pipes: [] },
         [RouteParamtypes.BODY]: { index: 2, data: 'test', pipes: [] },
-        [`key${CUSTOM_ROUTE_AGRS_METADATA}`]: {
+        [`key${CUSTOM_ROUTE_ARGS_METADATA}`]: {
           index: 3,
           data: 'custom',
           pipes: [],
@@ -154,7 +148,7 @@ describe('ExternalContextCreator', () => {
       const expectedValues = [
         { index: 0, type: RouteParamtypes.REQUEST, data: 'test' },
         { index: 2, type: RouteParamtypes.BODY, data: 'test' },
-        { index: 3, type: `key${CUSTOM_ROUTE_AGRS_METADATA}`, data: 'custom' },
+        { index: 3, type: `key${CUSTOM_ROUTE_ARGS_METADATA}`, data: 'custom' },
       ];
       expect(values[0]).to.deep.include(expectedValues[0]);
       expect(values[1]).to.deep.include(expectedValues[1]);
@@ -169,8 +163,8 @@ describe('ExternalContextCreator', () => {
     beforeEach(() => {
       consumerApplySpy = sinon.spy(pipesConsumer, 'apply');
     });
-    it('should call "consumer.apply"', () => {
-      contextCreator.getParamValue(
+    it('should call "consumer.apply"', async () => {
+      await contextCreator.getParamValue(
         value,
         { metatype, type: RouteParamtypes.NEXT, data: null },
         transforms,
@@ -193,12 +187,12 @@ describe('ExternalContextCreator', () => {
             {
               index: 1,
               type: 'test',
-              data: null,
+              data: null!,
               pipes: [],
               extractValue: () => null,
             },
           ],
-        );
+        )!;
         await pipesFn([]);
         expect(pipesFn).to.be.a('function');
       });

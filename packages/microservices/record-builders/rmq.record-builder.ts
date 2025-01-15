@@ -1,3 +1,6 @@
+/**
+ * @publicApi
+ */
 export interface RmqRecordOptions {
   expiration?: string | number;
   userId?: string;
@@ -16,10 +19,19 @@ export interface RmqRecordOptions {
   appId?: string;
 }
 
+/**
+ * @publicApi
+ */
 export class RmqRecord<TData = any> {
-  constructor(public readonly data: TData, public options?: RmqRecordOptions) {}
+  constructor(
+    public readonly data: TData,
+    public options?: RmqRecordOptions,
+  ) {}
 }
 
+/**
+ * @publicApi
+ */
 export class RmqRecordBuilder<TData> {
   private options?: RmqRecordOptions;
 

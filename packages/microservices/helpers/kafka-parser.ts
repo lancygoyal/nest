@@ -9,22 +9,28 @@ export class KafkaParser {
   }
 
   public parse<T = any>(data: any): T {
+    // Clone object to as modifying the original one would break KafkaJS retries
+    const result = {
+      ...data,
+      headers: { ...data.headers },
+    };
+
     if (!this.keepBinary) {
-      data.value = this.decode(data.value);
+      result.value = this.decode(data.value);
     }
 
     if (!isNil(data.key)) {
-      data.key = this.decode(data.key);
+      result.key = this.decode(data.key);
     }
     if (!isNil(data.headers)) {
       const decodeHeaderByKey = (key: string) => {
-        data.headers[key] = this.decode(data.headers[key]);
+        result.headers[key] = this.decode(data.headers[key]);
       };
       Object.keys(data.headers).forEach(decodeHeaderByKey);
     } else {
-      data.headers = {};
+      result.headers = {};
     }
-    return data;
+    return result;
   }
 
   public decode(value: Buffer): object | string | null | Buffer {
@@ -44,11 +50,13 @@ export class KafkaParser {
     let result = value.toString();
     const startChar = result.charAt(0);
 
-    // only try to parse objects and arrays
+    // Only try to parse objects and arrays
     if (startChar === '{' || startChar === '[') {
       try {
         result = JSON.parse(value.toString());
-      } catch (e) {}
+      } catch (e) {
+        // Do nothing
+      }
     }
     return result;
   }

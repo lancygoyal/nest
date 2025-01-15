@@ -1,30 +1,53 @@
-import { Provider, Scope, Type } from '@nestjs/common';
-import {
-  ClassProvider,
-  FactoryProvider,
-  ValueProvider,
-} from '@nestjs/common/interfaces';
+import { Logger, LoggerService, Provider, Scope, Type } from '@nestjs/common';
+import { EnhancerSubtype } from '@nestjs/common/constants';
+import { FactoryProvider, InjectionToken } from '@nestjs/common/interfaces';
+import { clc } from '@nestjs/common/utils/cli-colors.util';
 import { randomStringGenerator } from '@nestjs/common/utils/random-string-generator.util';
-import { isNil, isUndefined } from '@nestjs/common/utils/shared.utils';
+import {
+  isNil,
+  isString,
+  isUndefined,
+} from '@nestjs/common/utils/shared.utils';
 import { iterate } from 'iterare';
+import { UuidFactory } from '../inspector/uuid-factory';
 import { STATIC_CONTEXT } from './constants';
-import { InstanceToken, Module } from './module';
+import {
+  isClassProvider,
+  isFactoryProvider,
+  isValueProvider,
+} from './helpers/provider-classifier';
+import { Module } from './module';
+import { SettlementSignal } from './settlement-signal';
 
 export const INSTANCE_METADATA_SYMBOL = Symbol.for('instance_metadata:cache');
 export const INSTANCE_ID_SYMBOL = Symbol.for('instance_metadata:id');
 
+export interface HostComponentInfo {
+  /**
+   * Injection token (or class reference)
+   */
+  token: InjectionToken;
+  /**
+   * Flag that indicates whether DI subtree is durable
+   */
+  isTreeDurable: boolean;
+}
+
 export interface ContextId {
   readonly id: number;
+  payload?: unknown;
+  getParent?(info: HostComponentInfo): ContextId;
 }
 
 export interface InstancePerContext<T> {
   instance: T;
   isResolved?: boolean;
   isPending?: boolean;
-  donePromise?: Promise<void>;
+  donePromise?: Promise<unknown>;
 }
+
 export interface PropertyMetadata {
-  key: string;
+  key: symbol | string;
   wrapper: InstanceWrapper;
 }
 
@@ -36,15 +59,20 @@ interface InstanceMetadataStore {
 
 export class InstanceWrapper<T = any> {
   public readonly name: any;
-  public readonly token: InstanceToken;
+  public readonly token: InjectionToken;
   public readonly async?: boolean;
   public readonly host?: Module;
   public readonly isAlias: boolean = false;
-
+  public readonly subtype?: EnhancerSubtype;
   public scope?: Scope = Scope.DEFAULT;
-  public metatype: Type<T> | Function;
-  public inject?: FactoryProvider['inject'];
+  public metatype: Type<T> | Function | null;
+  public inject?: FactoryProvider['inject'] | null;
   public forwardRef?: boolean;
+  public durable?: boolean;
+  public initTime?: number;
+  public settlementSignal?: SettlementSignal;
+
+  private static logger: LoggerService = new Logger(InstanceWrapper.name);
 
   private readonly values = new WeakMap<ContextId, InstancePerContext<T>>();
   private readonly [INSTANCE_METADATA_SYMBOL]: InstanceMetadataStore = {};
@@ -53,12 +81,14 @@ export class InstanceWrapper<T = any> {
     | Map<string, WeakMap<ContextId, InstancePerContext<T>>>
     | undefined;
   private isTreeStatic: boolean | undefined;
+  private isTreeDurable: boolean | undefined;
 
   constructor(
     metadata: Partial<InstanceWrapper<T>> & Partial<InstancePerContext<T>> = {},
   ) {
-    this[INSTANCE_ID_SYMBOL] = randomStringGenerator();
     this.initialize(metadata);
+    this[INSTANCE_ID_SYMBOL] =
+      metadata[INSTANCE_ID_SYMBOL] ?? this.generateUuid();
   }
 
   get id(): string {
@@ -75,8 +105,11 @@ export class InstanceWrapper<T = any> {
   }
 
   get isNotMetatype(): boolean {
-    const isFactory = this.metatype && !isNil(this.inject);
-    return !this.metatype || isFactory;
+    return !this.metatype || this.isFactory;
+  }
+
+  get isFactory(): boolean {
+    return !!this.metatype && !isNil(this.inject);
   }
 
   get isTransient(): boolean {
@@ -100,10 +133,10 @@ export class InstanceWrapper<T = any> {
     contextId: ContextId,
     inquirerId: string,
   ): InstancePerContext<T> {
-    let collectionPerContext = this.transientMap.get(inquirerId);
+    let collectionPerContext = this.transientMap!.get(inquirerId);
     if (!collectionPerContext) {
       collectionPerContext = new WeakMap();
-      this.transientMap.set(inquirerId, collectionPerContext);
+      this.transientMap!.set(inquirerId, collectionPerContext);
     }
     const instancePerContext = collectionPerContext.get(contextId);
     return instancePerContext
@@ -127,12 +160,27 @@ export class InstanceWrapper<T = any> {
     inquirerId: string,
     value: InstancePerContext<T>,
   ) {
-    let collection = this.transientMap.get(inquirerId);
+    let collection = this.transientMap!.get(inquirerId);
     if (!collection) {
       collection = new WeakMap();
-      this.transientMap.set(inquirerId, collection);
+      this.transientMap!.set(inquirerId, collection);
     }
     collection.set(contextId, value);
+  }
+
+  public removeInstanceByContextId(contextId: ContextId, inquirerId?: string) {
+    if (this.scope === Scope.TRANSIENT && inquirerId) {
+      return this.removeInstanceByInquirerId(contextId, inquirerId);
+    }
+    this.values.delete(contextId);
+  }
+
+  public removeInstanceByInquirerId(contextId: ContextId, inquirerId: string) {
+    const collection = this.transientMap!.get(inquirerId);
+    if (!collection) {
+      return;
+    }
+    collection.delete(contextId);
   }
 
   public addCtorMetadata(index: number, wrapper: InstanceWrapper) {
@@ -143,10 +191,10 @@ export class InstanceWrapper<T = any> {
   }
 
   public getCtorMetadata(): InstanceWrapper[] {
-    return this[INSTANCE_METADATA_SYMBOL].dependencies;
+    return this[INSTANCE_METADATA_SYMBOL].dependencies!;
   }
 
-  public addPropertiesMetadata(key: string, wrapper: InstanceWrapper) {
+  public addPropertiesMetadata(key: symbol | string, wrapper: InstanceWrapper) {
     if (!this[INSTANCE_METADATA_SYMBOL].properties) {
       this[INSTANCE_METADATA_SYMBOL].properties = [];
     }
@@ -157,7 +205,7 @@ export class InstanceWrapper<T = any> {
   }
 
   public getPropertiesMetadata(): PropertyMetadata[] {
-    return this[INSTANCE_METADATA_SYMBOL].properties;
+    return this[INSTANCE_METADATA_SYMBOL].properties!;
   }
 
   public addEnhancerMetadata(wrapper: InstanceWrapper) {
@@ -168,7 +216,73 @@ export class InstanceWrapper<T = any> {
   }
 
   public getEnhancersMetadata(): InstanceWrapper[] {
-    return this[INSTANCE_METADATA_SYMBOL].enhancers;
+    return this[INSTANCE_METADATA_SYMBOL].enhancers!;
+  }
+
+  public isDependencyTreeDurable(lookupRegistry: string[] = []): boolean {
+    if (!isUndefined(this.isTreeDurable)) {
+      return this.isTreeDurable;
+    }
+    if (this.scope === Scope.REQUEST) {
+      this.isTreeDurable = this.durable === undefined ? false : this.durable;
+      if (this.isTreeDurable) {
+        this.printIntrospectedAsDurable();
+      }
+      return this.isTreeDurable;
+    }
+    const isStatic = this.isDependencyTreeStatic();
+    if (isStatic) {
+      return false;
+    }
+
+    const isTreeNonDurable = this.introspectDepsAttribute(
+      (collection, registry) =>
+        collection.some(
+          (item: InstanceWrapper) =>
+            !item.isDependencyTreeStatic() &&
+            !item.isDependencyTreeDurable(registry),
+        ),
+      lookupRegistry,
+    );
+    this.isTreeDurable = !isTreeNonDurable;
+    if (this.isTreeDurable) {
+      this.printIntrospectedAsDurable();
+    }
+    return this.isTreeDurable;
+  }
+
+  public introspectDepsAttribute(
+    callback: (
+      collection: InstanceWrapper[],
+      lookupRegistry: string[],
+    ) => boolean,
+    lookupRegistry: string[] = [],
+  ): boolean {
+    if (lookupRegistry.includes(this[INSTANCE_ID_SYMBOL])) {
+      return false;
+    }
+    lookupRegistry = lookupRegistry.concat(this[INSTANCE_ID_SYMBOL]);
+
+    const { dependencies, properties, enhancers } =
+      this[INSTANCE_METADATA_SYMBOL];
+
+    let introspectionResult = dependencies
+      ? callback(dependencies, lookupRegistry)
+      : false;
+
+    if (introspectionResult || !(properties || enhancers)) {
+      return introspectionResult;
+    }
+    introspectionResult = properties
+      ? callback(
+          properties.map(item => item.wrapper),
+          lookupRegistry,
+        )
+      : false;
+    if (introspectionResult || !enhancers) {
+      return introspectionResult;
+    }
+    return enhancers ? callback(enhancers, lookupRegistry) : false;
   }
 
   public isDependencyTreeStatic(lookupRegistry: string[] = []): boolean {
@@ -177,32 +291,19 @@ export class InstanceWrapper<T = any> {
     }
     if (this.scope === Scope.REQUEST) {
       this.isTreeStatic = false;
+      this.printIntrospectedAsRequestScoped();
       return this.isTreeStatic;
     }
-    if (lookupRegistry.includes(this[INSTANCE_ID_SYMBOL])) {
-      return true;
+    this.isTreeStatic = !this.introspectDepsAttribute(
+      (collection, registry) =>
+        collection.some(
+          (item: InstanceWrapper) => !item.isDependencyTreeStatic(registry),
+        ),
+      lookupRegistry,
+    );
+    if (!this.isTreeStatic) {
+      this.printIntrospectedAsRequestScoped();
     }
-    lookupRegistry = lookupRegistry.concat(this[INSTANCE_ID_SYMBOL]);
-
-    const { dependencies, properties, enhancers } =
-      this[INSTANCE_METADATA_SYMBOL];
-    let isStatic =
-      (dependencies &&
-        this.isWrapperListStatic(dependencies, lookupRegistry)) ||
-      !dependencies;
-
-    if (!isStatic || !(properties || enhancers)) {
-      this.isTreeStatic = isStatic;
-      return this.isTreeStatic;
-    }
-    const propertiesHosts = (properties || []).map(item => item.wrapper);
-    isStatic =
-      isStatic && this.isWrapperListStatic(propertiesHosts, lookupRegistry);
-    if (!isStatic || !enhancers) {
-      this.isTreeStatic = isStatic;
-      return this.isTreeStatic;
-    }
-    this.isTreeStatic = this.isWrapperListStatic(enhancers, lookupRegistry);
     return this.isTreeStatic;
   }
 
@@ -213,12 +314,12 @@ export class InstanceWrapper<T = any> {
     }
     const instancePerContext: InstancePerContext<T> = {
       ...staticInstance,
-      instance: undefined,
+      instance: undefined!,
       isResolved: false,
       isPending: false,
     };
     if (this.isNewable()) {
-      instancePerContext.instance = Object.create(this.metatype.prototype);
+      instancePerContext.instance = Object.create(this.metatype!.prototype);
     }
     this.setInstanceByContextId(contextId, instancePerContext);
     return instancePerContext;
@@ -231,12 +332,12 @@ export class InstanceWrapper<T = any> {
     const staticInstance = this.getInstanceByContextId(STATIC_CONTEXT);
     const instancePerContext: InstancePerContext<T> = {
       ...staticInstance,
-      instance: undefined,
+      instance: undefined!,
       isResolved: false,
       isPending: false,
     };
     if (this.isNewable()) {
-      instancePerContext.instance = Object.create(this.metatype.prototype);
+      instancePerContext.instance = Object.create(this.metatype!.prototype);
     }
     this.setInstanceByInquirerId(contextId, inquirerId, instancePerContext);
     return instancePerContext;
@@ -247,12 +348,12 @@ export class InstanceWrapper<T = any> {
     if (!this.isNewable() || host.isResolved) {
       return;
     }
-    return Object.create(this.metatype.prototype);
+    return Object.create(this.metatype!.prototype);
   }
 
   public isInRequestScope(
     contextId: ContextId,
-    inquirer?: InstanceWrapper | undefined,
+    inquirer?: InstanceWrapper,
   ): boolean {
     const isDependencyTreeStatic = this.isDependencyTreeStatic();
 
@@ -267,8 +368,9 @@ export class InstanceWrapper<T = any> {
     contextId: ContextId,
     inquirer: InstanceWrapper | undefined,
   ): boolean {
-    const isInquirerRequestScoped =
-      inquirer && !inquirer.isDependencyTreeStatic();
+    const isInquirerRequestScoped = !!(
+      inquirer && !inquirer.isDependencyTreeStatic()
+    );
 
     return (
       this.isDependencyTreeStatic() &&
@@ -286,7 +388,7 @@ export class InstanceWrapper<T = any> {
     return (
       this.isDependencyTreeStatic() &&
       contextId !== STATIC_CONTEXT &&
-      (isSelfRequested || (inquirer && inquirer.scope === Scope.TRANSIENT))
+      (isSelfRequested || !!(inquirer && inquirer.scope === Scope.TRANSIENT))
     );
   }
 
@@ -318,36 +420,28 @@ export class InstanceWrapper<T = any> {
   }
 
   public mergeWith(provider: Provider) {
-    if (!isUndefined((provider as ValueProvider).useValue)) {
+    if (isValueProvider(provider)) {
       this.metatype = null;
       this.inject = null;
+
       this.scope = Scope.DEFAULT;
 
       this.setInstanceByContextId(STATIC_CONTEXT, {
-        instance: (provider as ValueProvider).useValue,
+        instance: provider.useValue,
         isResolved: true,
         isPending: false,
       });
-    } else if ((provider as ClassProvider).useClass) {
+    } else if (isClassProvider(provider)) {
       this.inject = null;
-      this.metatype = (provider as ClassProvider).useClass;
-    } else if ((provider as FactoryProvider).useFactory) {
-      this.metatype = (provider as FactoryProvider).useFactory;
-      this.inject = (provider as FactoryProvider).inject || [];
+      this.metatype = provider.useClass;
+    } else if (isFactoryProvider(provider)) {
+      this.metatype = provider.useFactory;
+      this.inject = provider.inject || [];
     }
   }
 
   private isNewable(): boolean {
     return isNil(this.inject) && this.metatype && this.metatype.prototype;
-  }
-
-  private isWrapperListStatic(
-    tree: InstanceWrapper[],
-    lookupRegistry: string[],
-  ): boolean {
-    return tree.every((item: InstanceWrapper) =>
-      item.isDependencyTreeStatic(lookupRegistry),
-    );
   }
 
   private initialize(
@@ -357,9 +451,46 @@ export class InstanceWrapper<T = any> {
     Object.assign(this, wrapperPartial);
 
     this.setInstanceByContextId(STATIC_CONTEXT, {
-      instance,
+      instance: instance as T,
       isResolved,
     });
     this.scope === Scope.TRANSIENT && (this.transientMap = new Map());
+  }
+
+  private printIntrospectedAsRequestScoped() {
+    if (!this.isDebugMode() || this.name === 'REQUEST') {
+      return;
+    }
+    if (isString(this.name)) {
+      InstanceWrapper.logger.log(
+        `${clc.cyanBright(this.name)}${clc.green(
+          ' introspected as ',
+        )}${clc.magentaBright('request-scoped')}`,
+      );
+    }
+  }
+
+  private printIntrospectedAsDurable() {
+    if (!this.isDebugMode()) {
+      return;
+    }
+    if (isString(this.name)) {
+      InstanceWrapper.logger.log(
+        `${clc.cyanBright(this.name)}${clc.green(
+          ' introspected as ',
+        )}${clc.magentaBright('durable')}`,
+      );
+    }
+  }
+
+  private isDebugMode(): boolean {
+    return !!process.env.NEST_DEBUG;
+  }
+
+  private generateUuid(): string {
+    let key = this.name?.toString() ?? this.token?.toString();
+    key += this.host?.name ?? '';
+
+    return key ? UuidFactory.get(key) : randomStringGenerator();
   }
 }

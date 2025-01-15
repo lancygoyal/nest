@@ -1,3 +1,6 @@
+/**
+ * @publicApi
+ */
 export interface MqttRecordOptions {
   /**
    * The QoS
@@ -15,9 +18,9 @@ export interface MqttRecordOptions {
    *  MQTT 5.0 properties object
    */
   properties?: {
-    payloadFormatIndicator?: number;
+    payloadFormatIndicator?: boolean;
     messageExpiryInterval?: number;
-    topicAlias?: string;
+    topicAlias?: number;
     responseTopic?: string;
     correlationData?: Buffer;
     userProperties?: Record<string, string | string[]>;
@@ -26,6 +29,9 @@ export interface MqttRecordOptions {
   };
 }
 
+/**
+ * @publicApi
+ */
 export class MqttRecord<TData = any> {
   constructor(
     public readonly data: TData,
@@ -33,6 +39,9 @@ export class MqttRecord<TData = any> {
   ) {}
 }
 
+/**
+ * @publicApi
+ */
 export class MqttRecordBuilder<TData> {
   private options?: MqttRecordOptions;
 

@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
-import { ApplicationModule } from '../src/app.module';
+import { AppModule } from '../src/app.module';
 
 const RETURN_VALUE = 'test';
 const MIDDLEWARE_VALUE = 'middleware';
@@ -41,25 +41,48 @@ class TestController {
     return RETURN_VALUE;
   }
 
+  @Get('legacy-wildcard/overview')
+  testLegacyWildcard() {
+    return RETURN_VALUE;
+  }
+
+  @Get('splat-wildcard/overview')
+  testSplatWildcard() {
+    return RETURN_VALUE;
+  }
+
   @Get('overview/:id')
   overviewById() {
+    return RETURN_VALUE;
+  }
+
+  @Get('multiple/exclude')
+  multipleExclude() {
     return RETURN_VALUE;
   }
 }
 
 @Module({
-  imports: [ApplicationModule],
+  imports: [AppModule],
   controllers: [TestController],
 })
 class TestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply((req, res, next) => res.send(MIDDLEWARE_VALUE))
-      .exclude('test', 'overview/:id', 'wildcard/(.*)', {
-        path: 'middleware',
-        method: RequestMethod.POST,
-      })
-      .forRoutes('*');
+      .exclude(
+        'test',
+        'overview/:id',
+        'wildcard/*',
+        'legacy-wildcard/(.*)',
+        'splat-wildcard/*splat',
+        {
+          path: 'middleware',
+          method: RequestMethod.POST,
+        },
+      )
+      .exclude('multiple/exclude')
+      .forRoutes('*path');
   }
 }
 
@@ -107,6 +130,24 @@ describe('Exclude middleware', () => {
   it(`should exclude "/wildcard/overview" endpoint (by wildcard)`, () => {
     return request(app.getHttpServer())
       .get('/wildcard/overview')
+      .expect(200, RETURN_VALUE);
+  });
+
+  it(`should exclude "/legacy-wildcard/overview" endpoint (by wildcard, legacy syntax)`, () => {
+    return request(app.getHttpServer())
+      .get('/legacy-wildcard/overview')
+      .expect(200, RETURN_VALUE);
+  });
+
+  it(`should exclude "/splat-wildcard/overview" endpoint (by wildcard, new syntax)`, () => {
+    return request(app.getHttpServer())
+      .get('/splat-wildcard/overview')
+      .expect(200, RETURN_VALUE);
+  });
+
+  it(`should exclude "/multiple/exclude" endpoint`, () => {
+    return request(app.getHttpServer())
+      .get('/multiple/exclude')
       .expect(200, RETURN_VALUE);
   });
 

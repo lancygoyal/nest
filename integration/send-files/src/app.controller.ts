@@ -31,4 +31,14 @@ export class AppController {
   getFileWithHeaders(): StreamableFile {
     return this.appService.getFileWithHeaders();
   }
+
+  @Get('file/not/exist')
+  getNonExistantFile(): StreamableFile {
+    return this.appService.getFileThatDoesNotExist();
+  }
+
+  @Get('/file/slow')
+  getSlowFile(): StreamableFile {
+    return this.appService.getSlowStream();
+  }
 }

@@ -1,17 +1,15 @@
 /*
  * Nest @common
- * Copyright(c) 2017 - 2021 Kamil Mysliwiec
+ * Copyright(c) 2017 - 2025 Kamil Mysliwiec
  * https://nestjs.com
  * MIT Licensed
  */
 import 'reflect-metadata';
 
-export * from './cache';
 export * from './decorators';
 export * from './enums';
 export * from './exceptions';
 export * from './file-stream';
-export * from './http';
 export {
   Abstract,
   ArgumentMetadata,
@@ -28,6 +26,9 @@ export {
   FactoryProvider,
   ForwardReference,
   HttpServer,
+  HttpExceptionBody,
+  HttpExceptionBodyMessage,
+  HttpRedirectResponse,
   INestApplication,
   INestApplicationContext,
   INestMicroservice,
@@ -49,6 +50,7 @@ export {
   Paramtype,
   PipeTransform,
   Provider,
+  RawBodyRequest,
   RpcExceptionFilter,
   Scope,
   ScopeOptions,
@@ -61,6 +63,7 @@ export {
   WsExceptionFilter,
   WsMessageHandler,
 } from './interfaces';
+export * from './module-utils';
 export * from './pipes';
 export * from './serializer';
 export * from './services';

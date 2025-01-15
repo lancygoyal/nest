@@ -1,7 +1,9 @@
 import {
+  PARAMTYPES_METADATA,
   PROPERTY_DEPS_METADATA,
   SELF_DECLARED_DEPS_METADATA,
 } from '../../constants';
+import { ForwardReference, InjectionToken } from '../../interfaces';
 import { isUndefined } from '../../utils/shared.utils';
 
 /**
@@ -33,9 +35,17 @@ import { isUndefined } from '../../utils/shared.utils';
  *
  * @publicApi
  */
-export function Inject<T = any>(token?: T) {
-  return (target: object, key: string | symbol, index?: number) => {
-    const type = token || Reflect.getMetadata('design:type', target, key);
+export function Inject(
+  token?: InjectionToken | ForwardReference,
+): PropertyDecorator & ParameterDecorator {
+  const injectCallHasArguments = arguments.length > 0;
+
+  return (target: object, key: string | symbol | undefined, index?: number) => {
+    let type = token || Reflect.getMetadata('design:type', target, key!);
+    // Try to infer the token in a constructor-based injection
+    if (!type && !injectCallHasArguments) {
+      type = Reflect.getMetadata(PARAMTYPES_METADATA, target, key!)?.[index!];
+    }
 
     if (!isUndefined(index)) {
       let dependencies =

@@ -13,7 +13,10 @@ describe('ExternalExceptionFilterContext', () => {
 
   class CustomException {}
   @Catch(CustomException)
-  class ExceptionFilter {
+  class ExceptionFilter implements ExceptionFilter {
+    public catch(exc, res) {}
+  }
+  class ClassWithNoMetadata implements ExceptionFilter {
     public catch(exc, res) {}
   }
 
@@ -33,8 +36,8 @@ describe('ExternalExceptionFilterContext', () => {
       it('should return plain ExceptionHandler object', () => {
         const filter = exceptionFilter.create(
           new EmptyMetadata(),
-          () => ({} as any),
-          undefined,
+          () => ({}) as any,
+          undefined!,
         );
         expect((filter as any).filters).to.be.empty;
       });
@@ -46,8 +49,8 @@ describe('ExternalExceptionFilterContext', () => {
       it('should return ExceptionHandler object with exception filters', () => {
         const filter = exceptionFilter.create(
           new WithMetadata(),
-          () => ({} as any),
-          undefined,
+          () => ({}) as any,
+          undefined!,
         );
         expect((filter as any).filters).to.not.be.empty;
       });
@@ -58,6 +61,11 @@ describe('ExternalExceptionFilterContext', () => {
       expect(
         exceptionFilter.reflectCatchExceptions(new ExceptionFilter()),
       ).to.be.eql([CustomException]);
+    });
+    it('should return an empty array when metadata was found', () => {
+      expect(
+        exceptionFilter.reflectCatchExceptions(new ClassWithNoMetadata()),
+      ).to.be.eql([]);
     });
   });
   describe('createConcreteContext', () => {
@@ -96,7 +104,7 @@ describe('ExternalExceptionFilterContext', () => {
           .callsFake(() => scopedFilterWrappers);
         sinon
           .stub(instanceWrapper, 'getInstanceByContextId')
-          .callsFake(() => ({ instance } as any));
+          .callsFake(() => ({ instance }) as any);
 
         expect(exceptionFilter.getGlobalMetadata({ id: 3 })).to.contains(
           instance,

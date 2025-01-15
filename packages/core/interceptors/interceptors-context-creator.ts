@@ -41,19 +41,19 @@ export class InterceptorsContextCreator extends ContextCreator {
     inquirerId?: string,
   ): R {
     if (isEmpty(metadata)) {
-      return [] as R;
+      return [] as any[] as R;
     }
     return iterate(metadata)
       .filter(
         interceptor =>
           interceptor && (interceptor.name || interceptor.intercept),
       )
-      .map(interceptor =>
-        this.getInterceptorInstance(interceptor, contextId, inquirerId),
+      .map(
+        interceptor =>
+          this.getInterceptorInstance(interceptor, contextId, inquirerId)!,
       )
-      .filter(
-        (interceptor: NestInterceptor) =>
-          interceptor && isFunction(interceptor.intercept),
+      .filter((interceptor: NestInterceptor) =>
+        interceptor ? isFunction(interceptor.intercept) : false,
       )
       .toArray() as R;
   }
@@ -63,7 +63,7 @@ export class InterceptorsContextCreator extends ContextCreator {
     contextId = STATIC_CONTEXT,
     inquirerId?: string,
   ): NestInterceptor | null {
-    const isObject = (metatype as NestInterceptor).intercept;
+    const isObject = !!(metatype as NestInterceptor).intercept;
     if (isObject) {
       return metatype as NestInterceptor;
     }
@@ -74,7 +74,7 @@ export class InterceptorsContextCreator extends ContextCreator {
       return null;
     }
     const instanceHost = instanceWrapper.getInstanceByContextId(
-      contextId,
+      this.getContextId(contextId, instanceWrapper),
       inquirerId,
     );
     return instanceHost && instanceHost.instance;
@@ -99,7 +99,7 @@ export class InterceptorsContextCreator extends ContextCreator {
     inquirerId?: string,
   ): T {
     if (!this.config) {
-      return [] as T;
+      return [] as unknown[] as T;
     }
     const globalInterceptors = this.config.getGlobalInterceptors() as T;
     if (contextId === STATIC_CONTEXT && !inquirerId) {
@@ -108,7 +108,12 @@ export class InterceptorsContextCreator extends ContextCreator {
     const scopedInterceptorWrappers =
       this.config.getGlobalRequestInterceptors() as InstanceWrapper[];
     const scopedInterceptors = iterate(scopedInterceptorWrappers)
-      .map(wrapper => wrapper.getInstanceByContextId(contextId, inquirerId))
+      .map(wrapper =>
+        wrapper.getInstanceByContextId(
+          this.getContextId(contextId, wrapper),
+          inquirerId,
+        ),
+      )
       .filter(host => !!host)
       .map(host => host.instance)
       .toArray();

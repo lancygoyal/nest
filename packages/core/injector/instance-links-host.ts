@@ -1,34 +1,50 @@
+import { InjectionToken } from '@nestjs/common';
 import { isFunction } from '@nestjs/common/utils/shared.utils';
 import { UnknownElementException } from '../errors/exceptions/unknown-element.exception';
 import { NestContainer } from './container';
 import { InstanceWrapper } from './instance-wrapper';
-import { InstanceToken, Module } from './module';
+import { Module } from './module';
 
 type HostCollection = 'providers' | 'controllers' | 'injectables';
 
 export interface InstanceLink<T = any> {
-  token: InstanceToken;
+  token: InjectionToken;
   wrapperRef: InstanceWrapper<T>;
   collection: Map<any, InstanceWrapper>;
   moduleId: string;
 }
 
 export class InstanceLinksHost {
-  private readonly instanceLinks = new Map<InstanceToken, InstanceLink[]>();
+  private readonly instanceLinks = new Map<InjectionToken, InstanceLink[]>();
 
   constructor(private readonly container: NestContainer) {
     this.initialize();
   }
 
-  get<T = any>(token: InstanceToken, moduleId?: string): InstanceLink<T> {
-    const modulesMap = this.instanceLinks.get(token);
+  get<T = any>(token: InjectionToken): InstanceLink<T>;
+  get<T = any>(
+    token: InjectionToken,
+    options?: { moduleId?: string; each?: boolean },
+  ): InstanceLink<T> | Array<InstanceLink<T>>;
+  get<T = any>(
+    token: InjectionToken,
+    options: { moduleId?: string; each?: boolean } = {},
+  ): InstanceLink<T> | Array<InstanceLink<T>> {
+    const instanceLinksForGivenToken = this.instanceLinks.get(token);
 
-    if (!modulesMap) {
+    if (!instanceLinksForGivenToken) {
       throw new UnknownElementException(this.getInstanceNameByToken(token));
     }
-    const instanceLink = moduleId
-      ? modulesMap.find(item => item.moduleId === moduleId)
-      : modulesMap[modulesMap.length - 1];
+
+    if (options.each) {
+      return instanceLinksForGivenToken;
+    }
+
+    const instanceLink = options.moduleId
+      ? instanceLinksForGivenToken.find(
+          item => item.moduleId === options.moduleId,
+        )
+      : instanceLinksForGivenToken[instanceLinksForGivenToken.length - 1];
 
     if (!instanceLink) {
       throw new UnknownElementException(this.getInstanceNameByToken(token));
@@ -54,7 +70,7 @@ export class InstanceLinksHost {
 
   private addLink(
     wrapper: InstanceWrapper,
-    token: InstanceToken,
+    token: InjectionToken,
     moduleRef: Module,
     collectionName: HostCollection,
   ) {
@@ -72,7 +88,7 @@ export class InstanceLinksHost {
     }
   }
 
-  private getInstanceNameByToken(token: InstanceToken): string {
+  private getInstanceNameByToken(token: InjectionToken): string {
     return isFunction(token) ? (token as Function)?.name : (token as string);
   }
 }

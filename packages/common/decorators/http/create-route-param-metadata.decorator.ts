@@ -1,4 +1,4 @@
-import { v4 as uuid } from 'uuid';
+import { uid } from 'uid';
 import { ROUTE_ARGS_METADATA } from '../../constants';
 import { PipeTransform } from '../../index';
 import { Type } from '../../interfaces';
@@ -12,25 +12,25 @@ export type ParamDecoratorEnhancer = ParameterDecorator;
  * Defines HTTP route param decorator
  *
  * @param factory
+ * @param enhancers
+ *
+ * @publicApi
  */
-export function createParamDecorator<
-  FactoryData = any,
-  FactoryInput = any,
-  FactoryOutput = any,
->(
-  factory: CustomParamFactory<FactoryData, FactoryInput, FactoryOutput>,
+export function createParamDecorator<FactoryData = any, FactoryOutput = any>(
+  factory: CustomParamFactory<FactoryData, FactoryOutput>,
   enhancers: ParamDecoratorEnhancer[] = [],
 ): (
   ...dataOrPipes: (Type<PipeTransform> | PipeTransform | FactoryData)[]
 ) => ParameterDecorator {
-  const paramtype = uuid();
+  const paramtype = uid(21);
   return (
       data?,
       ...pipes: (Type<PipeTransform> | PipeTransform | FactoryData)[]
     ): ParameterDecorator =>
     (target, key, index) => {
       const args =
-        Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key) || {};
+        Reflect.getMetadata(ROUTE_ARGS_METADATA, target.constructor, key!) ||
+        {};
 
       const isPipe = (pipe: any) =>
         pipe &&
@@ -54,7 +54,7 @@ export function createParamDecorator<
           ...(paramPipes as PipeTransform[]),
         ),
         target.constructor,
-        key,
+        key!,
       );
       enhancers.forEach(fn => fn(target, key, index));
     };
